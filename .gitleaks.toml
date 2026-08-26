@@ -1,0 +1,20 @@
+title = "Aegis CyberAudit — configuración de gitleaks"
+
+# Reglas por defecto de gitleaks (AWS keys, JWTs, tokens genéricos de alta
+# entropía, etc.) + esto extiende, no reemplaza.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Falsos positivos ya identificados en este repo (ver auditoría pre-venta)"
+paths = [
+  # Los hashes de integridad de npm (sha512, base64) a veces contienen
+  # substrings que calzan con patrones de detección de JWT (empiezan con
+  # "eyJ") por pura coincidencia estadística — no son secretos.
+  '''package-lock\.json$''',
+  # Templates de entorno: solo tienen placeholders (change-me, xxxxx.supabase.co),
+  # nunca valores reales — ver .env.example / .env.test.example en la raíz.
+  '''(^|/)\.env\.example$''',
+  '''(^|/)\.env\.test\.example$''',
+  '''(^|/)\.env\.local\.example$''',
+]
