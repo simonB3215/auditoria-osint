@@ -3,8 +3,9 @@ import { authenticateToken, requireRole } from "../middlewares/auth.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../middlewares/errorHandler.js";
 import { supabaseForUser } from "../config/supabase.js";
-import { scanQueue, type ScanTargetAsset } from "../jobs/scanQueue.js";
+import { scanQueue, countActiveOrgScans, type ScanTargetAsset } from "../jobs/scanQueue.js";
 import { AUDIT_ACTIONS, logAuditEvent, requestContext } from "../services/auditLogger.js";
+import { env } from "../config/env.js";
 
 export const sandboxRouter = Router();
 
@@ -99,6 +100,19 @@ sandboxRouter.post(
       .from("audit_assets")
       .insert({ audit_id: audit.id, asset_id: asset.id });
     if (linkError) throw new AppError(400, "SANDBOX_LINK_FAILED", linkError.message);
+
+    // Mismo límite de concurrencia por organización que scans.ts (a.md,
+    // hardening del motor de escaneo, sección 1.4) — el sandbox encola por
+    // el mismo scanQueue/scanWorker compartido, así que también cuenta
+    // contra el techo de la organización.
+    const activeOrgScans = await countActiveOrgScans(profile.organizationId);
+    if (activeOrgScans >= env.MAX_CONCURRENT_SCANS_PER_ORG) {
+      throw new AppError(
+        429,
+        "ORG_SCAN_CONCURRENCY_LIMIT",
+        `Tu organización ya tiene ${activeOrgScans} escaneo(s) en curso (máximo ${env.MAX_CONCURRENT_SCANS_PER_ORG} simultáneos). Esperá a que termine alguno antes de lanzar otro.`
+      );
+    }
 
     // Mismo camino que POST /audits/:id/run-scan (scans.ts): encola el job
     // real en BullMQ y marca el audit "queued". El worker (scanWorker.ts)

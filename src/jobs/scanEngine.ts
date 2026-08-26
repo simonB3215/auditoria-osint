@@ -4,6 +4,14 @@ import { connect as tlsConnect } from "node:tls";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Timeout por invocación de nmap. Exportado (no solo local) porque
+ * `scanWorker.ts` deriva `JOB_TIME_BUDGET_MS` a partir de este mismo
+ * valor — una sola fuente de verdad para que ambos números no puedan
+ * desincronizarse (a.md, seguimiento del motor de escaneo, Tarea 2).
+ */
+export const NMAP_TIMEOUT_MS = 5 * 60 * 1000;
+
 const CHECK_TIMEOUT_MS = 8000;
 const HTTPS_PORTS = new Set([443, 8443]);
 const HTTP_LIKE_PORTS = new Set([80, 443, 8080, 8443]);
@@ -23,7 +31,16 @@ export interface OpenPort {
 
 export type ScanEngineResult =
   | { ok: true; openPorts: OpenPort[] }
-  | { ok: false; reason: "engine_not_available" | "scan_failed"; detail: string };
+  | {
+      ok: false;
+      // "out_of_scope_or_proxied": el activo resolvió (o apunta directo) a
+      // una IP dentro de un rango de CDN/proxy conocido — ver
+      // src/jobs/ipScopeCheck.ts (hardening del motor de escaneo, a.md
+      // sección 1.1). El chequeo ocurre en scanWorker.ts antes de llamar a
+      // esta función, no acá adentro.
+      reason: "engine_not_available" | "scan_failed" | "out_of_scope_or_proxied";
+      detail: string;
+    };
 
 /**
  * Ejecuta un escaneo de puertos con Nmap contra un target ya validado
@@ -36,13 +53,24 @@ export type ScanEngineResult =
  * débiles (`--script ssl-enum-ciphers`) y de parches faltantes (NSE `vuln`
  * scripts / integración con Nuclei) queda fuera de este MVP y se deja como
  * punto de extensión de ScanEngineResult.
+ *
+ * `topPorts`: cuántos puertos más comunes escanea nmap (`--top-ports`).
+ * Lo decide el llamador (scanWorker.ts, desde `env.SCAN_TOP_PORTS`) — este
+ * motor no importa configuración directamente, la recibe como parámetro
+ * (a.md, seguimiento del motor de escaneo, Tarea 3).
  */
-export async function runNmapScan(target: string): Promise<ScanEngineResult> {
+export async function runNmapScan(target: string, topPorts: number): Promise<ScanEngineResult> {
   try {
     const { stdout } = await execFileAsync(
+      // -T3 ("normal", el default de nmap) en vez de -T4 ("aggressive"):
+      // -T4 aumenta la probabilidad de disparar IDS/IPS del cliente, y acá
+      // se está escaneando infraestructura de terceros — aunque esté
+      // autorizada, conviene el timing más prudente (a.md, hardening del
+      // motor de escaneo, sección 1.3). No se expone como configuración
+      // libre (a.md, seguimiento, Fuera de alcance).
       "nmap",
-      ["-Pn", "-T4", "--top-ports", "100", "-sV", "-oG", "-", target],
-      { timeout: 5 * 60 * 1000, maxBuffer: 10 * 1024 * 1024 }
+      ["-Pn", "-T3", "--top-ports", String(topPorts), "-sV", "-oG", "-", target],
+      { timeout: NMAP_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 }
     );
     return { ok: true, openPorts: parseGrepableOutput(stdout) };
   } catch (err: unknown) {

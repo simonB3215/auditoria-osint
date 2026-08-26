@@ -5,9 +5,10 @@ import { sensitiveActionRateLimiter } from "../middlewares/security.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../middlewares/errorHandler.js";
 import { supabaseForUser, supabaseAdmin } from "../config/supabase.js";
-import { scanQueue, type ScanTargetAsset } from "../jobs/scanQueue.js";
+import { scanQueue, countActiveOrgScans, type ScanTargetAsset } from "../jobs/scanQueue.js";
 import { validateUuidParams } from "../middlewares/validateParams.js";
 import { AUDIT_ACTIONS, logAuditEvent, requestContext } from "../services/auditLogger.js";
+import { env } from "../config/env.js";
 
 export const scansRouter = Router();
 
@@ -143,11 +144,58 @@ scansRouter.post(
       );
     }
 
+    // Bloqueo explícito de CIDR (a.md, seguimiento del motor de escaneo,
+    // Tarea 1 — riesgo legal activo): combina tres debilidades a la vez —
+    // verificación por autoatestación (no prueba propiedad), sin cobertura
+    // del chequeo de CDN/proxy (ver ipScopeCheck.ts, solo aplica a
+    // domain/ip), y un rango amplio expande la superficie escaneada. El
+    // modal de alta ni siquiera ofrece `cidr`, así que hoy es alcanzable
+    // solo por una vía que la UI no expone — se rechaza el pedido
+    // COMPLETO (no se descarta en silencio el activo cidr y se sigue con
+    // el resto) y se audita. Reactivarlo requiere, juntas: verificación de
+    // propiedad más fuerte que la autoatestación, cobertura del chequeo de
+    // CDN/proxy para rangos, y un tope de tamaño — ver el reporte de esta
+    // fase para la alternativa propuesta (no implementada).
+    const cidrAssets = assets.filter((a) => a.type === "cidr");
+    if (cidrAssets.length > 0) {
+      await logAuditEvent({
+        organizationId: audit.organization_id,
+        actorId: profile.id,
+        action: AUDIT_ACTIONS.CIDR_SCAN_BLOCKED,
+        resourceType: "scan",
+        resourceId: auditId,
+        payloadAfter: { blockedAssets: cidrAssets.map((a) => ({ id: a.id, value: a.value })) },
+        ...requestContext(req),
+      });
+      throw new AppError(
+        422,
+        "CIDR_SCAN_DISABLED",
+        "El escaneo de rangos CIDR está deshabilitado por política: la verificación de propiedad actual (autoatestación) no es suficiente para autorizar el escaneo de un rango completo. Escaneá activos individuales (IP o dominio) en su lugar."
+      );
+    }
+
     const scanTargets: ScanTargetAsset[] = assets.map((a) => ({
       assetId: a.id,
       assetType: a.type as ScanTargetAsset["assetType"],
       assetValue: a.value,
     }));
+
+    // Rate limiting por organización (a.md, hardening del motor de
+    // escaneo, sección 1.4): `sensitiveActionRateLimiter` de arriba limita
+    // por IP, no por tenant — esto cierra el hueco de que una sola
+    // organización monopolice los slots de `concurrency` globales del
+    // worker (ver src/jobs/scanWorker.ts) a costa de las demás. Se chequea
+    // acá (después de validar los activos, antes de encolar) para que un
+    // intento sobre un activo no autorizado siempre se detecte primero,
+    // sin importar cuánta carga tenga la organización en ese momento.
+    const activeOrgScans = await countActiveOrgScans(audit.organization_id);
+    if (activeOrgScans >= env.MAX_CONCURRENT_SCANS_PER_ORG) {
+      throw new AppError(
+        429,
+        "ORG_SCAN_CONCURRENCY_LIMIT",
+        `Tu organización ya tiene ${activeOrgScans} escaneo(s) en curso (máximo ${env.MAX_CONCURRENT_SCANS_PER_ORG} simultáneos). Esperá a que termine alguno antes de lanzar otro.`
+      );
+    }
 
     // Vincula los activos escaneados al alcance de esta auditoría (audit_assets).
     const links = scanTargets.map((a) => ({ audit_id: auditId, asset_id: a.assetId }));

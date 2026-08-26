@@ -17,6 +17,26 @@ const envSchema = z.object({
   // tocar la lógica de negocio; el valor por defecto no cambió (Fase de
   // auditoría pre-venta, a.md sección 2.2).
   MAX_ASSETS_PER_ORG: z.coerce.number().int().positive().default(5),
+  // Techo de escaneos simultáneos (queued/running) por organización, para
+  // que un solo tenant no pueda monopolizar los slots de `concurrency`
+  // del scanWorker en perjuicio de las demás (a.md, hardening del motor
+  // de escaneo, sección 1.4). Con concurrency=4 en el worker, 2 asegura
+  // que ninguna organización ocupe más de la mitad de los slots globales.
+  MAX_CONCURRENT_SCANS_PER_ORG: z.coerce.number().int().positive().default(2),
+  // Cuántos puertos más comunes escanea nmap (--top-ports). Configuración
+  // GLOBAL por entorno (no por auditoría): hacerlo por auditoría exigiría
+  // una columna nueva en `audits`/`audit_assets` — una migración, fuera de
+  // lo que corresponde a un "arreglo a aplicar" de esta fase (a.md,
+  // seguimiento del motor de escaneo, Tarea 3). Tope máximo duro en 5000:
+  // deja margen por sobre el default sin acercarse a un barrido casi
+  // completo (65535) por configuración — para eso hace falta un flag
+  // aparte que hoy no existe.
+  SCAN_TOP_PORTS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(5000, "SCAN_TOP_PORTS no puede superar 5000 (evita un barrido casi completo por configuración)")
+    .default(1000),
   // Clave AES-256 (32 bytes) en hex, para cifrar evidencias antes de subirlas a Storage.
   EVIDENCE_ENCRYPTION_KEY: z
     .string()

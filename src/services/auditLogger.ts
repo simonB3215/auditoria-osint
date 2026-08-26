@@ -33,6 +33,12 @@ export const AUDIT_ACTIONS = {
   SANDBOX_CREATED: "SANDBOX_CREATED",
   SANDBOX_DELETED: "SANDBOX_DELETED",
   DOMAIN_AUTO_VERIFIED: "DOMAIN_AUTO_VERIFIED",
+  // Hardening del motor de escaneo (a.md, secciones 1.1 y 1.2).
+  SCAN_TARGET_OUT_OF_SCOPE: "SCAN_TARGET_OUT_OF_SCOPE",
+  SCAN_TIME_BUDGET_EXCEEDED: "SCAN_TIME_BUDGET_EXCEEDED",
+  // Seguimiento del motor de escaneo (a.md, Tarea 1): rechazo explícito de
+  // un activo `cidr`, distinto de "tipo no soportado" (skipped).
+  CIDR_SCAN_BLOCKED: "CIDR_SCAN_BLOCKED",
 } as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
 

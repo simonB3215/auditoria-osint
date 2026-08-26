@@ -945,6 +945,172 @@ visible en el historial de esa sesión de trabajo. Mencionado
 explícitamente para que el usuario evalúe si rotar esa credencial de
 Upstash por precaución.
 
+### Hardening del motor de escaneo (a.md, "BUILD PROMPT: Hardening del motor de escaneo")
+Trabajo en dos bloques, tal como pedía a.md: Bloque 1 (arreglos seguros,
+aplicados) y Bloque 2 (decisiones con trade-off, propuestas sin ejecutar).
+
+**Bloque 1 — aplicado**:
+
+- **1.1 Resolución de IP y detección de CDN/proxy** (`src/jobs/cdnRanges.ts`
+  nuevo, `src/jobs/ipScopeCheck.ts` nuevo, `src/jobs/scanWorker.ts`,
+  `src/jobs/scanEngine.ts`): antes de escanear un activo `domain`, el
+  worker resuelve A/AAAA y rechaza el activo entero si CUALQUIERA de las
+  IPs resueltas cae dentro de un rango publicado de Cloudflare (fuente:
+  cloudflare.com/ips-v4 e ips-v6, IPv4 e IPv6, 22 rangos) — con DNS
+  round-robin no hay garantía de qué IP tocaría nmap en el momento real,
+  así que una sola coincidencia basta para bloquear todo el dominio. Si
+  pasa el chequeo, se escanea la IP ya verificada (nunca el dominio de
+  nuevo) para que no haya una segunda resolución fuera de este control.
+  Los activos `ip` se chequean directo contra los mismos rangos (sin
+  resolución DNS, ya son una IP). `ScanEngineResult` ganó el caso
+  `"out_of_scope_or_proxied"` que pedía a.md. Cada bloqueo por CDN/proxy
+  queda registrado en `audit_logs` (`SCAN_TARGET_OUT_OF_SCOPE`, nuevo).
+  La lógica de matching (IPv4 con máscara de 32 bits, IPv6 con `BigInt`
+  de 128 bits) se validó con 23 casos de borde calculados a mano antes de
+  integrarla (rangos exactos, límites superiores, rangos adyacentes,
+  direcciones públicas no relacionadas) — los 23 pasaron.
+  - **No cubierto, y por qué**: activos `cidr` no se chequean contra estos
+    rangos — a.md ya señala el riesgo de CIDR como punto de decisión
+    aparte (Bloque 2.C de abajo), no tiene sentido resolver a medias acá
+    lo que se está pidiendo evaluar como decisión completa ahí.
+  - **"Verificar que la IP resuelta sea coherente con el activo
+    verificado"** (última viñeta de 1.1): no es accionable hoy para
+    activos `domain` sin una migración — el modelo de datos no guarda una
+    IP esperada por dominio, solo verifica la *propiedad* del dominio
+    (TXT), no una IP específica. Para `ip` es inherente (el valor
+    verificado YA es la IP escaneada). No se agregó ninguna columna
+    nueva — una migración excede "Bloque 1, no invasivo"; queda como
+    decisión del usuario si se quiere agregar ese pineo.
+- **1.2 Presupuesto de tiempo total por job** (`src/jobs/scanWorker.ts`):
+  `JOB_TIME_BUDGET_MS = 20 min`. Al agotarse mid-loop, los activos
+  restantes quedan marcados como no procesados (sin arrancar), el audit
+  pasa a `failed` (no existe un estado "parcial" en el enum
+  `audit_status` sin migración — ver `db/schema.sql` — y agregar uno
+  excede el alcance seguro; los hallazgos ya insertados antes del corte
+  NO se descartan) y queda un evento `SCAN_TIME_BUDGET_EXCEEDED` en
+  `audit_logs` con la lista de activos no procesados. `lockDuration` del
+  Worker: `JOB_TIME_BUDGET_MS + 5 min` (antes usaba el default de BullMQ,
+  30 segundos — muy por debajo de un solo `runNmapScan` de 5 minutos, ya
+  un riesgo real de que BullMQ lo marcara "stalled" en pleno escaneo,
+  incluso antes de este cambio). De paso se corrigió un bug que esto
+  hubiera introducido si no se tocaba: el envío del email de notificación
+  chequeaba `!allFailed`, que no contemplaba este nuevo motivo de
+  `failed` — ahora chequea el status final real.
+- **1.3 Timing de nmap** (`src/jobs/scanEngine.ts`): `-T4` → `-T3`.
+- **1.4 Rate limiting por organización**: verificado primero si ya
+  existía — `sensitiveActionRateLimiter` (`src/middlewares/security.ts`)
+  limita por **IP**, no por organización (20 acciones sensibles/hora,
+  compartido además con subida de evidencia), así que no cerraba el caso
+  que señala a.md. Agregado: `countActiveOrgScans()`
+  (`src/jobs/scanQueue.ts`, cuenta audits `queued`/`running` de la
+  organización) + `MAX_CONCURRENT_SCANS_PER_ORG` (nuevo en `env.ts`,
+  default 2 — con `concurrency: 4` global en el worker, ninguna
+  organización puede ocupar más de la mitad de los slots). Chequeado en
+  ambos puntos donde se encola un job: `src/routes/scans.ts` (después de
+  validar los activos, para que una autorización inválida siempre se
+  detecte primero sin importar la carga de la organización) y
+  `src/routes/sandbox.ts` (comparten el mismo `scanQueue`/`scanWorker`).
+  `429 ORG_SCAN_CONCURRENCY_LIMIT` si se supera.
+
+**Bloque 2 — propuestas, sin ejecutar** (ver el reporte de esta fase en
+el historial de conversación para el detalle completo con trade-offs):
+2.A cobertura de puertos (`--top-ports 100` → 1000, o configurable);
+2.B escaneo UDP (hoy inexistente); 2.C acotar el tamaño máximo de CIDR
+escaneable o reforzar su verificación (autoatestación, el mismo mecanismo
+débil que ya está documentado para `ip`).
+
+Ningún cambio cruzó las Reglas de alcance de a.md (activos verificados,
+solo observación, calibrar no reinventar, `execFile` con args en array
+sin interpolación de shell — no tocado). `tsc --noEmit` limpio. Test
+suite: ver el punto anterior de este README (Pendientes post-auditoría)
+para el estado general; esta fase se corrió contra la suite completa
+después de los cambios, sin diferencias nuevas respecto del baseline ya
+documentado ahí (TC-10 sigue fallando solo por la falta de Redis local,
+causa ajena a este trabajo).
+
+### Seguimiento del motor de escaneo (prompts.md, "Seguimiento del motor de escaneo (CIDR, presupuesto de tiempo, puertos configurables)")
+Tres tareas acopladas, resueltas en el orden que pedía su propia nota de
+acoplamiento: primero el tope de puertos (Tarea 3), después el
+presupuesto derivado de ese tope (Tarea 2), y el bloqueo de CIDR al
+final (Tarea 1) — aunque se reporta en el orden de prioridad original.
+
+- **Tarea 1 — CIDR bloqueado**: `src/routes/scans.ts` rechaza
+  explícitamente cualquier `asset_ids` que incluya un activo `cidr` con
+  `422 CIDR_SCAN_DISABLED` (mensaje claro: la autoatestación no alcanza
+  para autorizar un rango completo), auditado con el evento nuevo
+  `CIDR_SCAN_BLOCKED`. Salvaguarda equivalente en `scanWorker.ts`:
+  un `cidr` que llegara igual a `processScanJob` (otra vía, un job viejo
+  en la cola) se bloquea ANTES del chequeo genérico de
+  `NETWORK_SCANNABLE_TYPES`, con el mismo evento — deliberadamente
+  **no** se lo trata como "tipo no soportado" (ese bucket sigue siendo
+  solo para `repository`/`cloud_server`, que es semánticamente distinto:
+  "no aplica" vs. "bloqueado por política"). Documentado en el código qué
+  se necesitaría para reactivarlo: verificación de propiedad más fuerte
+  que la autoatestación + cobertura del chequeo de CDN/proxy para rangos
+  + un tope de tamaño — las tres juntas, no una sola. La alternativa de
+  mantenerlo vivo acotado a un prefijo mínimo (ej. `/28`) queda como
+  propuesta, no implementada (ver más abajo).
+- **Tarea 2 — presupuesto derivado**: `JOB_TIME_BUDGET_MS` en
+  `scanWorker.ts` dejó de ser un número fijo (20 min) y ahora es
+  `env.MAX_ASSETS_PER_ORG * (NMAP_TIMEOUT_MS + PER_ASSET_CHECKS_MARGIN_MS)`
+  — con los defaults actuales, `5 * (5 min + 60s) = 30 min`.
+  `NMAP_TIMEOUT_MS` se exportó desde `scanEngine.ts` (antes era un
+  `5 * 60 * 1000` duplicado en dos archivos, un desincronismo esperando a
+  pasar) — una sola fuente de verdad para el timeout de una invocación de
+  nmap. `PER_ASSET_CHECKS_MARGIN_MS` (60s) es el peor caso real de los
+  chequeos TLS/cabeceras: como esos chequeos solo se disparan sobre 4
+  puertos HTTP(S) **fijos** (443/8443 para TLS, 80/443/8080/8443 para
+  cabeceras — ver `HTTPS_PORTS`/`HTTP_LIKE_PORTS` en `scanEngine.ts`), NO
+  escalan con `SCAN_TOP_PORTS` — así que, en la aritmética actual, ampliar
+  el rango de puertos no cambia el número del presupuesto (nmap ya corta
+  a los `NMAP_TIMEOUT_MS` sin importar cuántos puertos pidió escanear).
+  Igual quedó expresado en términos de la constante, no de un número
+  suelto, documentado explícitamente por si en el futuro cambia esa
+  relación (ver el comentario en el código). `lockDuration` del Worker:
+  presupuesto + 5 min de margen, ahora **35 min** (subió de los 25 min
+  anteriores junto con el presupuesto, automáticamente, sin tocarlo a
+  mano).
+- **Tarea 3 — puertos configurables**: `SCAN_TOP_PORTS` nuevo en
+  `env.ts` (Zod: entero positivo, tope máximo duro **5000**, default
+  **1000**). Alcance **global por entorno**, no por auditoría — hacerlo
+  por auditoría exigiría una columna nueva (migración), fuera de lo que
+  corresponde a un arreglo "a aplicar" de esta fase; queda documentado en
+  el propio comentario de la variable. `runNmapScan()` en
+  `scanEngine.ts` pasó a recibir `topPorts` como parámetro en vez de
+  tenerlo hardcodeado (`"100"`) — el motor sigue sin importar
+  configuración directamente, la recibe de quien lo llama
+  (`scanWorker.ts`, desde `env.SCAN_TOP_PORTS`). El timing (`-T3`) NO se
+  expuso como configuración, tal como exigía el alcance.
+
+**Consistencia numérica entre las tres** (nota de acoplamiento): el tope
+de puertos (Tarea 3) no cambia el número del presupuesto (Tarea 2) en la
+aritmética actual — justificado arriba, es una propiedad real del
+sistema (el timeout duro de nmap por invocación no varía con
+`--top-ports`), no una omisión. El bloqueo de CIDR (Tarea 1) elimina de
+raíz el peor caso de superficie de escaneo que un rango amplio
+introduciría; como se optó por el bloqueo (no por la alternativa
+acotada), no hace falta ningún ajuste adicional al cálculo de recursos
+de la Tarea 2 por el lado de CIDR.
+
+**Propuestas "requiere confirmación", sin implementar**:
+- *Paralelismo acotado dentro del job* (Tarea 2): procesar N activos a
+  la vez en vez de en secuencia, para que el tiempo total no sea la suma
+  de todos. Trade-off: más carga concurrente hacia distintos targets a
+  la vez, mayor uso de recursos del worker por job.
+- *CIDR acotado* (Tarea 1, alternativa a mantenerlo bloqueado): permitir
+  `cidr` otra vez pero solo hasta un prefijo mínimo (ej. no más amplio
+  que `/28`), con el chequeo de CDN/proxy aplicado por-IP del rango y
+  verificación reforzada. Trade-off: reintroduce la superficie de riesgo
+  que motivó el bloqueo, acotada pero no eliminada; solo tiene sentido si
+  hay una necesidad real de escanear rangos.
+
+Ningún cambio cruzó las Reglas de alcance (activos verificados,
+solo observación, `execFile` con args en array intacto, timing no
+expuesto como config libre, sin barrido completo por defecto). `tsc
+--noEmit` y `npm run build` limpios. Suite completa: 11 pass, 1 fail —
+mismo TC-10 con la misma causa ya documentada (sin Redis local), sin
+diferencias nuevas.
+
 ### Seguridad
 - Evidencias cifradas (AES-256-GCM) antes de subir a Storage.
 - Buckets privados; los reportes se sirven vía signed URL temporal.
