@@ -6,7 +6,7 @@ import { authenticateToken, requireRole } from "../middlewares/auth.js";
 import { sensitiveActionRateLimiter } from "../middlewares/security.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../middlewares/errorHandler.js";
-import { supabaseForUser, supabaseAdmin } from "../config/supabase.js";
+import { supabaseForUser } from "../config/supabase.js";
 import { validateUuidParams } from "../middlewares/validateParams.js";
 import { detectFileKind, validateSemanticContent } from "../services/fileValidation.js";
 import { uploadEncryptedEvidence } from "../services/evidenceStorage.js";
@@ -27,9 +27,6 @@ function resolveUploaderName(uploader: { full_name: string | null } | { full_nam
   const row = Array.isArray(uploader) ? uploader[0] : uploader;
   return row?.full_name ?? null;
 }
-
-/** Cuota FinOps del Piloto Invitado (10 días): ver a.md, sección FINOPS & LÍMITES DE USO. */
-const GUEST_STORAGE_QUOTA_BYTES = 100 * 1024 * 1024;
 
 /**
  * Lista de evidencias cargadas + cobertura actual de la auditoría, sin
@@ -92,7 +89,7 @@ const uploadBodySchema = z.object({
 evidencesRouter.post(
   "/audits/:auditId/evidences",
   authenticateToken,
-  requireRole(["ciso", "auditor", "auditor_guest"]),
+  requireRole(["ciso", "auditor"]),
   validateUuidParams("auditId"),
   sensitiveActionRateLimiter,
   upload.single("file"),
@@ -117,29 +114,6 @@ evidencesRouter.post(
     }
     if (!audit) {
       throw new AppError(404, "AUDIT_NOT_FOUND", "Auditoría no encontrada o sin acceso");
-    }
-
-    // Cuota del Piloto Invitado: el total almacenado por la organización
-    // (no solo lo que subió el guest) no puede superar 100MB mientras el
-    // trial esté activo.
-    if (profile.role === "auditor_guest") {
-      const { data: orgAudits } = await supabaseAdmin
-        .from("audits")
-        .select("id")
-        .eq("organization_id", audit.organization_id);
-      const orgAuditIds = (orgAudits ?? []).map((a) => a.id);
-      const { data: sizeRows } =
-        orgAuditIds.length > 0
-          ? await supabaseAdmin.from("audit_evidences").select("size_bytes").in("audit_id", orgAuditIds)
-          : { data: [] };
-      const currentBytes = (sizeRows ?? []).reduce((sum, r) => sum + (r.size_bytes ?? 0), 0);
-      if (currentBytes + req.file.size > GUEST_STORAGE_QUOTA_BYTES) {
-        throw new AppError(
-          403,
-          "GUEST_STORAGE_QUOTA_EXCEEDED",
-          `El Piloto Invitado permite un máximo de ${GUEST_STORAGE_QUOTA_BYTES / (1024 * 1024)}MB de almacenamiento por organización`
-        );
-      }
     }
 
     // Capa 1: validación estructural (magic bytes)

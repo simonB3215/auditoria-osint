@@ -130,9 +130,8 @@ pertenece al Cliente o no cuenta con autorización legítima.
 4.1. El acceso al Servicio requiere la creación de una cuenta asociada a
 una organización. Dentro de cada organización, el Cliente puede asignar
 a sus usuarios los siguientes roles, cada uno con permisos
-diferenciados: `ciso` (control total sobre la organización), `auditor`,
-`auditor_guest` (acceso de evaluación por tiempo limitado, sujeto a
-cuotas de uso) y `viewer` (acceso de solo lectura).
+diferenciados: `ciso` (control total sobre la organización), `auditor`
+y `viewer` (acceso de solo lectura).
 
 4.2. El Cliente es responsable de la exactitud de la información
 proporcionada al registrarse, de la gestión de los roles que asigna a

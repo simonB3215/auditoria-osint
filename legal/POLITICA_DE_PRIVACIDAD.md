@@ -71,8 +71,7 @@ organización Cliente en cuanto persona jurídica contratante.
   proveedor.
 * Identificador de sesión, cuando el usuario opta por iniciar sesión con
   Google OAuth.
-* Rol asignado dentro de la organización (`ciso`, `auditor`,
-  `auditor_guest`, `viewer`).
+* Rol asignado dentro de la organización (`ciso`, `auditor`, `viewer`).
 
 ### 4.2. Datos de activos técnicos
 

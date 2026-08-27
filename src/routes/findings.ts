@@ -63,7 +63,7 @@ const updateStatusSchema = z.object({
 findingsRouter.patch(
   "/findings/:id/status",
   authenticateToken,
-  requireRole(["ciso", "auditor", "auditor_guest"]),
+  requireRole(["ciso", "auditor"]),
   validateUuidParams("id"),
   asyncHandler(async (req, res) => {
     const profile = req.profile!;

@@ -100,8 +100,7 @@ plataforma, en servidores de los Subencargados listados en el Anexo I.
 3.2. **Finalidad**: exclusivamente la prestación del Servicio, esto es:
 
 * gestión de cuentas de usuario y control de acceso basado en roles
-  (`ciso`, `auditor`, `auditor_guest`, `viewer`) dentro de la
-  organización del Cliente;
+  (`ciso`, `auditor`, `viewer`) dentro de la organización del Cliente;
 * registro y verificación de propiedad de activos de red (dominios e
   IPs públicas) antes de cualquier escaneo (ver Cláusula 5);
 * ejecución de auditorías técnicas de perímetro externo (Nmap, TLS,
@@ -404,8 +403,8 @@ documento.
    ningún activo puede escanearse sin verificación de propiedad (DNS TXT
    para dominios, autoatestación de rol `ciso` para IPs).
 7. **Control de acceso basado en roles (RBAC)**: roles de organización
-   (`ciso`, `auditor`, `auditor_guest`, `viewer`) con permisos
-   diferenciados; el acceso administrativo de plataforma
+   (`ciso`, `auditor`, `viewer`) con permisos diferenciados; el acceso
+   administrativo de plataforma
    (`is_platform_admin`) es un privilegio ortogonal otorgado únicamente
    de forma local y manual (ver Cláusula 6.b).
 8. **Limitación de tasa (*rate limiting*)**: aplicada de forma general y,

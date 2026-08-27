@@ -117,8 +117,7 @@ export default function AdminKpisPage() {
       ]
     : [];
 
-  const segmentLabel = (segment: string) =>
-    segment === "trial_active" ? t.segmentTrialActive : segment === "trial_expired" ? t.segmentTrialExpired : t.segmentStandard;
+  const segmentLabel = (segment: string) => (segment === "trial_expired" ? t.segmentTrialExpired : t.segmentStandard);
 
   return (
     <div className="flex flex-col gap-6">

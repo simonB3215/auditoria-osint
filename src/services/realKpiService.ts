@@ -63,7 +63,7 @@ export interface RealKpiFinancial {
 
 export interface RealKpiFunnel {
   totalOrganizations: number;
-  /** Organizaciones con al menos un perfil que pasó (o está) por el Piloto Invitado — señal real vía `profiles.expires_at`. */
+  /** Organizaciones con al menos un perfil que alguna vez pasó por un trial (rol auditor_guest, removido) — señal histórica real vía `profiles.expires_at`. */
   trialOrganizations: number;
   payingOrganizations: number;
   trialToPaidConversionPct: number | null;
@@ -87,7 +87,14 @@ export interface DailyActivityPoint {
   criticalFindings: number;
 }
 
-export type OrganizationSegment = "trial_active" | "trial_expired" | "standard";
+/**
+ * "trial_active" existía mientras el rol auditor_guest (Piloto Invitado)
+ * estaba vivo — se quitó tras su eliminación (migración
+ * 022_remove_guest_role.sql), ninguna organización puede volver a tener
+ * un trial activo. "trial_expired" se conserva: sigue siendo una señal
+ * histórica real vía `profiles.expires_at`, no depende del rol.
+ */
+export type OrganizationSegment = "trial_expired" | "standard";
 
 export interface SubscriptionSummaryRow {
   organizationId: string;
@@ -238,20 +245,21 @@ export async function getRealKpiReport(period: KpiPeriod): Promise<RealKpiReport
 
   // --- Resumen de organizaciones (reemplaza la tabla de suscripciones por
   // plan que pedía a.md, ya que no existe ningún concepto de plan/pago
-  // real — se segmenta por la señal real de ciclo de vida que sí existe: el
-  // Piloto Invitado). ---
-  const profilesByOrg = new Map<string, { role: string; expires_at: string | null }[]>();
+  // real — se segmenta por la señal real de ciclo de vida que sí existe:
+  // si alguna vez tuvieron un usuario en trial, vía profiles.expires_at.
+  // El rol auditor_guest que originaba esa señal ya no existe (migración
+  // 022_remove_guest_role.sql) — expires_at queda como dato histórico. ---
+  const profilesByOrg = new Map<string, { expires_at: string | null }[]>();
   for (const p of allProfiles) {
     const list = profilesByOrg.get(p.organization_id) ?? [];
-    list.push({ role: p.role, expires_at: p.expires_at });
+    list.push({ expires_at: p.expires_at });
     profilesByOrg.set(p.organization_id, list);
   }
   const subscriptions: SubscriptionSummaryRow[] = orgs
     .map((org) => {
       const orgProfiles = profilesByOrg.get(org.id) ?? [];
-      const hasActiveGuest = orgProfiles.some((p) => p.role === "auditor_guest");
       const hasTrialSignal = orgProfiles.some((p) => p.expires_at !== null);
-      const segment: OrganizationSegment = hasActiveGuest ? "trial_active" : hasTrialSignal ? "trial_expired" : "standard";
+      const segment: OrganizationSegment = hasTrialSignal ? "trial_expired" : "standard";
       const trialExpiresAt = orgProfiles
         .map((p) => p.expires_at)
         .filter((v): v is string => v !== null)

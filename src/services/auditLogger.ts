@@ -7,7 +7,9 @@ import { supabaseAdmin } from "../config/supabase.js";
  * evento nuevo — esta lista es la referencia de qué valores existen hoy.
  * (El sistema de invitación por link se eliminó — filas históricas de
  * `audit_logs` pueden seguir teniendo `USER_INVITED`/`INVITATION_ACCEPTED`,
- * pero ya no se generan nuevas.)
+ * pero ya no se generan nuevas. Mismo caso para `GUEST_ROLE_EXPIRED` tras
+ * la eliminación del rol `auditor_guest` — ver migración
+ * 022_remove_guest_role.sql.)
  */
 export const AUDIT_ACTIONS = {
   EVIDENCE_UPLOADED: "EVIDENCE_UPLOADED",

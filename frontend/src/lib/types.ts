@@ -1,11 +1,11 @@
-export type UserRole = "ciso" | "auditor" | "auditor_guest" | "viewer";
+export type UserRole = "ciso" | "auditor" | "viewer";
 
 export interface Profile {
   id: string;
   organizationId: string;
   role: UserRole;
   isPlatformAdmin: boolean;
-  /** Solo no-null para auditor_guest (Piloto Invitado) o un ex-guest ya degradado a viewer. */
+  /** Legado del rol auditor_guest (Piloto Invitado, removido) — solo no-null en perfiles que fueron guest en el pasado. */
   expiresAt: string | null;
   /** Límite de activos por organización (`MAX_ASSETS_PER_ORG` del backend) — nunca hardcodear este número en el frontend. */
   maxAssetsPerOrg: number;
@@ -389,7 +389,7 @@ export interface DailyActivityPoint {
   criticalFindings: number;
 }
 
-export type OrganizationSegment = "trial_active" | "trial_expired" | "standard";
+export type OrganizationSegment = "trial_expired" | "standard";
 
 export interface SubscriptionSummaryRow {
   organizationId: string;

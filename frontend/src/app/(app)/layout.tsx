@@ -4,7 +4,6 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { KeyRound, LayoutDashboard, LogOut, Server, ShieldCheck, ShieldUser, Timer } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/client";
 import { useProfile } from "@/hooks/useProfile";
 import { useI18n } from "@/lib/i18n/context";
@@ -83,21 +82,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
             {loading ? (
               <Skeleton className="h-5 w-24" />
-            ) : profile?.role === "auditor_guest" && profile.expiresAt ? (
-              <Badge variant="secondary" className="gap-1.5">
-                <Timer className="size-3" aria-hidden />
-                {dict.guestPilot.badge}
-                {" · "}
-                {(() => {
-                  const daysLeft = Math.max(
-                    0,
-                    Math.ceil((new Date(profile.expiresAt).getTime() - Date.now()) / 86_400_000)
-                  );
-                  return daysLeft <= 1
-                    ? dict.guestPilot.lastDay
-                    : dict.guestPilot.daysRemaining.replace("{days}", String(daysLeft));
-                })()}
-              </Badge>
             ) : profile ? (
               <span className="text-sm text-muted-foreground">{t.roles[profile.role]}</span>
             ) : null}

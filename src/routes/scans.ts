@@ -4,16 +4,13 @@ import { authenticateToken, requireRole } from "../middlewares/auth.js";
 import { sensitiveActionRateLimiter } from "../middlewares/security.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../middlewares/errorHandler.js";
-import { supabaseForUser, supabaseAdmin } from "../config/supabase.js";
+import { supabaseForUser } from "../config/supabase.js";
 import { scanQueue, countActiveOrgScans, type ScanTargetAsset } from "../jobs/scanQueue.js";
 import { validateUuidParams } from "../middlewares/validateParams.js";
 import { AUDIT_ACTIONS, logAuditEvent, requestContext } from "../services/auditLogger.js";
 import { env } from "../config/env.js";
 
 export const scansRouter = Router();
-
-/** Cuota FinOps del Piloto Invitado (10 días): ver a.md, sección FINOPS & LÍMITES DE USO. */
-const GUEST_SCAN_QUOTA = 3;
 
 const runScanBodySchema = z.object({
   asset_ids: z.array(z.string().uuid()).optional(),
@@ -22,7 +19,7 @@ const runScanBodySchema = z.object({
 scansRouter.post(
   "/audits/:auditId/run-scan",
   authenticateToken,
-  requireRole(["ciso", "auditor", "auditor_guest"]),
+  requireRole(["ciso", "auditor"]),
   validateUuidParams("auditId"),
   sensitiveActionRateLimiter,
   asyncHandler(async (req, res) => {
@@ -45,30 +42,6 @@ scansRouter.post(
     }
     if (audit.status === "queued" || audit.status === "running") {
       throw new AppError(409, "SCAN_ALREADY_IN_PROGRESS", "Ya hay un escaneo en curso para esta auditoría");
-    }
-
-    // Cuota del Piloto Invitado: máximo GUEST_SCAN_QUOTA escaneos ejecutados
-    // por organización durante todo el trial, no por usuario — así un
-    // consultor invitado no puede esquivarla creando otra sesión. scan_runs
-    // no tiene policy de SELECT para `authenticated` (ver migración 006),
-    // así que el conteo se hace con service_role.
-    if (profile.role === "auditor_guest") {
-      const { data: orgAudits } = await supabaseAdmin
-        .from("audits")
-        .select("id")
-        .eq("organization_id", audit.organization_id);
-      const orgAuditIds = (orgAudits ?? []).map((a) => a.id);
-      const { count } =
-        orgAuditIds.length > 0
-          ? await supabaseAdmin.from("scan_runs").select("id", { count: "exact", head: true }).in("audit_id", orgAuditIds)
-          : { count: 0 };
-      if ((count ?? 0) >= GUEST_SCAN_QUOTA) {
-        throw new AppError(
-          403,
-          "GUEST_SCAN_QUOTA_EXCEEDED",
-          `El Piloto Invitado permite un máximo de ${GUEST_SCAN_QUOTA} escaneos durante el período de prueba`
-        );
-      }
     }
 
     let assets: Array<{ id: string; type: string; value: string; verification_status: string }> = [];

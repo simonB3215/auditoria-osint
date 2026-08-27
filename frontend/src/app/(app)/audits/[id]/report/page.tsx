@@ -37,8 +37,7 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
   const { dict } = useI18n();
   const t = dict.report;
   const { profile } = useProfile();
-  const canReview = profile?.role === "ciso" || profile?.role === "auditor" || profile?.role === "auditor_guest";
-  const isExpiredGuest = profile?.role === "viewer" && Boolean(profile.expiresAt);
+  const canReview = profile?.role === "ciso" || profile?.role === "auditor";
 
   const SEVERITY_TABS: { value: FindingSeverity | "all"; label: string }[] = [
     { value: "all", label: t.severityAll },
@@ -84,7 +83,6 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
   const [reasonPreset, setReasonPreset] = useState("other");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [expiredNotice, setExpiredNotice] = useState(false);
 
   function loadFindings() {
     setLoading(true);
@@ -215,14 +213,6 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
         </Alert>
       )}
 
-      {expiredNotice && (
-        <Alert variant="destructive">
-          <AlertDescription>
-            <strong>{dict.guestPilot.expiredTitle}.</strong> {dict.guestPilot.expiredMessage}
-          </AlertDescription>
-        </Alert>
-      )}
-
       {anci && anci.technicalControls.length > 0 && (
         <Card>
           <CardHeader>
@@ -332,7 +322,7 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
                   <TableHead>{t.colFinding}</TableHead>
                   <TableHead>{t.colRemediation}</TableHead>
                   <TableHead>{t.colStatus}</TableHead>
-                  {(canReview || isExpiredGuest) && <TableHead className="text-right">{t.colActions}</TableHead>}
+                  {canReview && <TableHead className="text-right">{t.colActions}</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -381,18 +371,6 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
                               </DropdownMenuContent>
                             </DropdownMenu>
                           )}
-                        </div>
-                      </TableCell>
-                    ) : isExpiredGuest ? (
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                          <Button variant="ghost" size="sm" onClick={() => setDetailFinding(finding)}>
-                            <Eye className="size-3.5" aria-hidden />
-                            {t.viewDetails}
-                          </Button>
-                          <Button variant="ghost" size="sm" className="opacity-50" onClick={() => setExpiredNotice(true)}>
-                            <MoreHorizontal className="size-4" aria-hidden />
-                          </Button>
                         </div>
                       </TableCell>
                     ) : null}

@@ -32,8 +32,7 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
   const { dict } = useI18n();
   const t = dict.auditDetail;
   const { profile } = useProfile();
-  const canWrite = profile?.role === "ciso" || profile?.role === "auditor" || profile?.role === "auditor_guest";
-  const isExpiredGuest = profile?.role === "viewer" && Boolean(profile.expiresAt);
+  const canWrite = profile?.role === "ciso" || profile?.role === "auditor";
 
   const [audit, setAudit] = useState<Audit | null>(null);
   const [requirements, setRequirements] = useState<ComplianceRequirement[]>([]);
@@ -86,10 +85,7 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
 
   function openScanConfirm() {
     if (!canWrite) {
-      setScanNotice({
-        kind: "error",
-        message: isExpiredGuest ? dict.guestPilot.expiredMessage : dict.guestPilot.scanFailed,
-      });
+      setScanNotice({ kind: "error", message: t.scanFailed });
       return;
     }
     setOwnershipChecked(false);
@@ -102,10 +98,10 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
     setScanNotice(null);
     try {
       await api.post(`/api/v1/audits/${id}/run-scan`, {});
-      setScanNotice({ kind: "success", message: dict.guestPilot.scanQueued });
+      setScanNotice({ kind: "success", message: t.scanQueued });
       loadAll();
     } catch (err) {
-      setScanNotice({ kind: "error", message: getApiErrorMessage(err, dict.guestPilot.scanFailed) });
+      setScanNotice({ kind: "error", message: getApiErrorMessage(err, t.scanFailed) });
     } finally {
       setScanning(false);
     }
@@ -173,7 +169,7 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
             disabled={scanning}
           >
             {scanning ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <ScanSearch className="size-4" aria-hidden />}
-            {scanning ? dict.guestPilot.runningScan : t.runScanNetwork}
+            {scanning ? t.runningScan : t.runScanNetwork}
           </Button>
           <Button asChild variant="outline" size="sm">
             <Link href={`/audits/${id}/report`}>
@@ -249,14 +245,7 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
             </CardHeader>
             <CardContent className="flex flex-col gap-3">
               <p className="text-xs text-muted-foreground">{t.filesModuleLegend}</p>
-              {isExpiredGuest ? (
-                <div className="flex flex-col gap-2 rounded-md border border-dashed p-4 opacity-60">
-                  <p className="text-sm font-medium">{dict.guestPilot.expiredTitle}</p>
-                  <p className="text-sm text-muted-foreground">{dict.guestPilot.expiredMessage}</p>
-                </div>
-              ) : (
-                <EvidenceUpload auditId={id} requirements={documentaryRequirements} onUploaded={handleUploaded} />
-              )}
+              <EvidenceUpload auditId={id} requirements={documentaryRequirements} onUploaded={handleUploaded} />
             </CardContent>
           </Card>
         </div>

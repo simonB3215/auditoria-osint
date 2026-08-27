@@ -150,8 +150,9 @@ URLs de Supabase.
   (no localmente), así que sigue funcionando sin cambios sin importar qué
   esquema de firma use el proyecto de Supabase.
 - **RBAC por organización**: `ciso` (dueño/máximo permiso) > `auditor` >
-  `viewer`, definido en `profiles.role`. `auditor_guest` ("Piloto Invitado")
-  es un quinto rol especial de solo 10 días — ver sección propia abajo.
+  `viewer`, definido en `profiles.role`. Hubo un cuarto rol temporal,
+  `auditor_guest` ("Piloto Invitado", 10 días) — se eliminó por completo
+  (ver "Eliminación del rol `auditor_guest`" más abajo).
 - **RLS multi-tenant**: cada tabla filtra por `organization_id` vía
   `current_organization_id()`, así que un usuario nunca ve datos de otra
   organización, ni aunque el backend tuviera un bug — la base de datos misma
@@ -831,6 +832,76 @@ explícito unos commits atrás.
   simulación) y con Playwright en la UI (banner crítico, contador "3/5",
   precarga de texto en el modal híbrido).
 
+### Sistema de consentimiento de cookies (a.md, "BUILD PROMPT: SISTEMA DE CONSENTIMIENTO DE COOKIES (Next.js / Aegis CyberAudit)")
+Módulo nuevo en `frontend/`: banner + panel de preferencias por
+categoría, montado una sola vez desde `CookieConsentProvider` en
+`app/layout.tsx`. Antes de escribir código se verificaron en el repo los
+dos supuestos técnicos que a.md pedía confirmar:
+- **Sesión de Supabase → cookies, no localStorage**: `frontend/src/lib/supabase/client.ts`
+  usa `createBrowserClient` de `@supabase/ssr` (sin `storage:` override), y
+  `server.ts`/`middleware.ts` usan `createServerClient` con `cookies:
+  {getAll, setAll}` — toda la sesión vive en cookies. Confirmado, tal como
+  asumía a.md.
+- **Preferencia de tema y de idioma → sí son localStorage, no cookies**
+  (`aegis-theme`, `aegis-locale` en `ThemeProvider`/`I18nProvider`). La
+  ficha técnica de a.md asumía que la categoría `necessary` cubría
+  "sesión de Supabase y preferencia de tema" como si ambas fueran
+  cookies; se corrigió esa parte — la descripción de la categoría
+  `necessary` (`cookieConsent.categories.necessary` en el diccionario)
+  solo menciona la cookie de sesión, no el tema, porque el tema
+  técnicamente no es una cookie y este es "un sistema de cookies", no de
+  almacenamiento en general.
+- **Sin herramientas de analítica/tracking instaladas**: se confirmó por
+  grep en `frontend/` y en ambos `package.json`. La categoría `analytics`
+  queda definida (`frontend/src/lib/cookieConsent/categories.ts`) y
+  visible en el panel, pero sin ningún script asociado — `useHasConsent`
+  (`frontend/src/lib/cookieConsent/context.tsx`) es el helper ya
+  preparado para engancharla el día que exista.
+
+Estructura: `frontend/src/lib/cookieConsent/` (categorías, helpers de
+cookie propia con reconciliación por versión de esquema, provider +
+hooks `useCookieConsent`/`useHasConsent`) y
+`frontend/src/components/cookie-consent/` (banner, diálogo de
+preferencias con `Switch` de shadcn — se agregó con `npx shadcn add
+switch`, faltaba en el repo — y el disparador para reabrir
+preferencias). El consentimiento se persiste en una cookie propia
+(`aegis_cookie_consent`, `Path=/`, `SameSite=Lax`, `Secure` en HTTPS,
+~180 días), nunca en `localStorage`/`sessionStorage`, tal como exigía
+a.md.
+
+- **Sin footer global para el disparador de "reabrir preferencias"**:
+  a.md sugería colocarlo "por ejemplo, en el footer", pero el proyecto no
+  tiene footer en ninguna página (ni pública ni en el shell autenticado
+  de `(app)`). Se implementó como un botón flotante discreto
+  (`CookiePreferencesReopenTrigger`), montado por el propio provider y
+  visible en toda la app una vez que el usuario ya decidió. Se probó en
+  la esquina superior derecha e inferior derecha/izquierda antes de
+  asentarse en **superior izquierda**: la derecha choca con el selector
+  de idioma en las páginas públicas (`absolute right-4 top-4` en
+  `/login`, `/register`) y con el contenedor de toasts
+  (`fixed bottom-4 right-4`); inferior izquierda coincide en `next dev`
+  con el indicador de devtools de Next.js (no ocurre en build de
+  producción, pero molestaba en desarrollo local). Si en el futuro se
+  agrega un footer real, el mismo componente se puede reubicar ahí sin
+  tocar su lógica.
+- **`/legal/cookies` no existe todavía**: el enlace del panel de
+  preferencias apunta ahí igual, con un comentario
+  `// TODO: crear /legal/cookies...` en el código, tal como pedía a.md
+  en vez de asumir que la ruta existe. (Sí existe ya el contenido legal
+  en Markdown, en `legal/POLITICA_DE_COOKIES.md` en la raíz del repo —
+  publicarlo como página pública de Next.js queda pendiente.)
+- Reconciliación por versión de esquema (`CONSENT_SCHEMA_VERSION`): si
+  sube, invalida todo consentimiento previo y vuelve a mostrar el
+  banner; si solo se agrega una categoría opcional nueva sin subir la
+  versión, esa categoría entra reconciliada en `false` sin forzar que
+  el banner reaparezca (ya cumple "apagada por defecto").
+- Verificado con `tsc --noEmit` y `next build` limpios, y con Playwright
+  contra el servidor de desarrollo real: aparición del banner, apertura
+  del panel, toggle de "Analítica", guardado (cookie escrita con los
+  atributos correctos), banner ausente tras recargar, reapertura desde
+  el disparador reflejando la elección guardada, sin errores de consola
+  ni de hidratación.
+
 ### Auditoría de seguridad y consistencia pre-venta (a.md, "BUILD PROMPT: AUDITORÍA DE SEGURIDAD Y CONSISTENCIA PRE-VENTA")
 Auditoría en dos fases: primero reportar sin tocar nada, después aplicar
 solo los arreglos acotados que pedía el propio a.md.
@@ -1111,6 +1182,77 @@ expuesto como config libre, sin barrido completo por defecto). `tsc
 mismo TC-10 con la misma causa ya documentada (sin Redis local), sin
 diferencias nuevas.
 
+### Eliminación del rol `auditor_guest` (prompts.md, "BUILD PROMPT: Eliminacion del rol auditor_guest (Piloto Invitado temporal)")
+Dos fases: inventario y propuesta (sin tocar nada), después aplicar tras
+confirmación explícita del usuario.
+
+**Inventario**: referencias en tipos (`UserRole` backend/frontend),
+`user_role` (enum de Postgres, agregado en la migración 012 — nunca
+existió en `schema.sql`), 7 policies de RLS re-declaradas por la
+migración 013 con una guarda de expiración del guest, la función
+`current_profile_expires_at()` (exclusiva de esas guardas), cuotas de
+escaneo/storage (`scans.ts`, `evidences.ts`), degradación autónoma
+(`auth.ts`), 5 `requireRole([...])` que lo incluían, UI (badge del
+topbar, banners de "trial vencido" en `/audits/[id]` y su reporte),
+i18n (namespace `guestPilot` completo + `roles.auditor_guest`), 3 menciones
+en `legal/` y, encontrado ya en la fase de aplicar (no estaba en el
+inventario original — lo marco como una omisión de esta fase, no del
+prompt): la secuencia completa de emails de nurturing día 1/7/10 en
+`src/services/emailTemplates.ts` (`sendGuestEmail` y las 3 plantillas
+que solo llamaba ese código), que no se detectó en el primer pase porque
+no contenía el literal `auditor_guest`. Cero referencias en tests/seeds.
+
+**Chequeo de escalada de privilegios**: cada rama revisada (quitar el rol
+de un `requireRole`, quitar las cuotas extra, quitar la guarda de RLS,
+quitar `'auditor_guest'` de `findings_modify`) va en dirección neutra o
+más restrictiva — ninguna otorga más acceso a nadie. Detalle completo en
+el reporte de esta fase (historial de conversación).
+
+**Cuentas migradas**: 2, ambas ya vencidas, ambas en una organización de
+prueba — downgrade a `viewer` (mínimo privilegio), `expires_at` no se
+tocó (queda como registro histórico, no se borra dato de nadie).
+
+**Estrategia de enum**: Postgres no permite `DROP VALUE` de un enum sin
+recrear el tipo completo (columna + `current_user_role()` + dependencias)
+— riesgo real sin una red de CI que corra la suite completa contra un
+clon antes de aplicar. Se eligió dejar `'auditor_guest'` como valor
+**inerte** en `user_role` (documentado con `COMMENT ON TYPE`), en vez de
+la migración pesada — ver `db/migrations/022_remove_guest_role.sql`
+(migración nueva; las migraciones 012/013/014 que originaron el rol
+**no se tocaron**, son historial de lo que ya corrió contra la base real).
+
+**Aplicado**: rol quitado de `UserRole` (backend y frontend), degradación
+autónoma eliminada de `auth.ts` (código muerto tras la migración), cuotas
+de escaneo/storage eliminadas de `scans.ts`/`evidences.ts`, `auditor_guest`
+quitado de los 5 `requireRole([...])`, badge del topbar y banners de
+"trial vencido" eliminados de la UI, namespace `guestPilot` completo
+eliminado del i18n (3 mensajes genéricos de escaneo que vivían ahí por
+conveniencia —no eran guest-específicos— se movieron a `auditDetail`),
+secuencia de nurturing eliminada de `emailTemplates.ts`, 3 menciones
+actualizadas en `legal/`. `GUEST_ROLE_EXPIRED` se conserva en
+`AUDIT_ACTIONS` (mismo patrón que `USER_INVITED`/`INVITATION_ACCEPTED`:
+filas históricas de `audit_logs` pueden seguir teniéndolo, no se generan
+nuevas). El KPI de `/admin/kpis` que segmentaba organizaciones en
+*trial activo* / *trial vencido* / *estándar* perdió el segmento "activo"
+(inalcanzable para siempre tras la migración) — decisión del usuario,
+opción **B** de las dos presentadas: simplificar en vez de dejar un
+segmento permanentemente en cero.
+
+**Verificado**: grep final limpio (solo quedan comentarios históricos
+intencionales — mismo patrón que el sistema de invitación por link ya
+eliminado — y las migraciones 012/013/014, que no se editan, más el
+scaffolding sin commitear de otra tarea que no se tocó). `tsc --noEmit`
+y `npm run build` limpios en backend y frontend. Suite completa: 11
+pass, 1 fail (mismo TC-10 por falta de Redis local, causa preexistente
+ajena a esta fase) — sin fallos nuevos. Las 7 policies de RLS se
+verificaron directamente contra Postgres (`pg_policies`), no solo por
+"la migración no tiró error": coinciden byte a byte con su forma
+original previa a la migración 013, sin ninguna guarda de
+`auditor_guest` residual; `current_profile_expires_at()` confirmado
+dropeado. `auth.test.ts`/`multitenant.test.ts`/`evidences.test.ts`
+(login, aislamiento RLS, subida de evidencia) siguen pasando limpios
+contra la Supabase real para los tres roles restantes.
+
 ### Seguridad
 - Evidencias cifradas (AES-256-GCM) antes de subir a Storage.
 - Buckets privados; los reportes se sirven vía signed URL temporal.
@@ -1118,43 +1260,11 @@ diferencias nuevas.
   escaneo) además del rate limit general.
 - Ningún endpoint permite auto-otorgarse organización, rol o `platform_admin`.
 
-### Piloto Invitado (10 días)
-> ⚠️ **El mecanismo para crear un Piloto Invitado nuevo quedó huérfano.**
-> Este rol (`auditor_guest`) se otorgaba exclusivamente al aceptar un link
-> de invitación, y ese sistema (`invite_links`, `/settings/team`,
-> `/register?invite=<token>`, `POST /onboarding/accept-invitation`) se
-> eliminó por completo — toda gestión de usuarios ahora es asignación
-> directa desde `/admin` (ver sección de arriba), y esa asignación directa
-> (`POST /admin/users/role`) solo acepta `ciso`/`auditor`/`viewer`, no
-> `auditor_guest`. La mecánica de expiración/degradación/cuotas descrita
-> abajo sigue vigente para cualquier perfil que ya tenga el rol, pero hoy
-> no hay ninguna forma de generar uno nuevo desde la UI. Pendiente:
-> decidir si se agrega `auditor_guest` como opción asignable en
-> `/admin/users/role`, o si se da de baja el resto de la funcionalidad.
-- **Degradación autónoma**: no depende de un job para bajar de nivel. En
-  cuanto `expires_at` vence, la siguiente request autenticada de ese
-  usuario lo baja a `viewer` en el momento (`authenticateToken`), antes de
-  seguir procesando esa misma request. La policy de RLS que exige
-  `expires_at > now()` para escribir es la red de seguridad para la
-  ventana entre que expira y esa próxima request.
-- **Cuotas FinOps del trial**: máximo 3 escaneos y 100MB de almacenamiento
-  por organización durante los 10 días (no por usuario), devuelto como 403
-  si se supera — ver `POST /audits/:id/run-scan` y
-  `POST /audits/:id/evidences`.
-- **UI**: badge en el topbar con los días restantes mientras está activo;
-  al expirar, "Cargar evidencia", "Ejecutar escaneo" y las acciones sobre
-  hallazgos quedan visualmente deshabilitadas con un aviso puntual para
-  actualizar a Plan Pro, en vez de simplemente desaparecer.
-- **Secuencia de nurturing (día 1/7/10)**: las 3 plantillas de email están
-  preparadas como funciones puras en `src/services/emailTemplates.ts`
-  (asunto + texto + HTML reales, con los datos de cobertura/días
-  restantes), pero **no hay envío real conectado** — sin
-  `RESEND_API_KEY`, el contenido queda en el log del servidor en vez de
-  salir por correo. El email de bienvenida (día 1) ya no está enganchado a
-  ningún punto de integración real (vivía en `POST /onboarding/accept-invitation`,
-  eliminado junto con el resto del sistema de invitación) — las funciones
-  siguen ahí, listas para conectarse el día que exista otra forma de dar de
-  alta un Piloto Invitado.
+### Piloto Invitado (10 días) — rol eliminado
+> El rol `auditor_guest` ("Piloto Invitado") se **eliminó por completo**.
+> Ver la sección "Eliminación del rol `auditor_guest`" más abajo para el
+> detalle completo (inventario, migración de cuentas, decisiones tomadas).
+> Los roles vigentes son `ciso`, `auditor` y `viewer`.
 
 ### Ley N° 21.663 de Ciberseguridad (Chile — ANCI)
 - Framework seleccionable `ley_21663_cl` en `/audits/new` y en la edición de
@@ -1315,11 +1425,12 @@ rolling / año a la fecha) que recalcula todo contra `src/services/realKpiServic
   dato genuino**: reutiliza `getCostBreakdown()` de `costEngine.ts` (el
   mismo motor de `/admin/costs`), acotado al periodo seleccionado.
 - **Embudo comercial real**: organizaciones totales, dominios verificados,
-  organizaciones con Piloto Invitado activo o usado (señal real vía
-  `profiles.expires_at`, que se conserva incluso después de que el
-  Piloto expira y el perfil baja a `viewer`), y clientes pagados (`0` hoy,
-  mismo motivo que el punto anterior). Penetración de mercado reutiliza la
-  misma constante de 10.000 empresas (Ley 21.663 / SII) que
+  organizaciones con señal histórica de haber tenido un usuario en trial
+  (vía `profiles.expires_at`, que se conserva aunque el rol que la
+  originaba —`auditor_guest`— ya no exista, ver "Eliminación del rol
+  `auditor_guest`" más abajo), y clientes pagados (`0` hoy, mismo motivo
+  que el punto anterior). Penetración de mercado reutiliza la misma
+  constante de 10.000 empresas (Ley 21.663 / SII) que
   `/admin/internal-finops`.
 - **Indicadores operativos reales**: % de dominios verificados (sobre
   `assets` tipo `domain`, ver módulo de verificación de dominio),
@@ -1331,7 +1442,9 @@ rolling / año a la fecha) que recalcula todo contra `src/services/realKpiServic
   suscripciones por plan (Starter/Pro/Custom) con estado de pago — al no
   existir ningún concepto de plan o pago, se reemplaza por una
   segmentación basada en la única señal de ciclo de vida que sí es real:
-  *Piloto Invitado activo*, *Piloto Invitado vencido* o *Cuenta estándar*.
+  *Prueba vencida* o *Cuenta estándar* (el segmento "trial activo" se
+  quitó al eliminar el rol `auditor_guest` — ninguna organización puede
+  volver a tener uno).
 - Ver `DASHBOARD_FINOPS_INTERNO.md` (documentación del panel de
   simulación) para la comparación completa entre ambos paneles.
 
@@ -1462,12 +1575,6 @@ Selector de idioma (ES neutro / EN) en todas las pantallas, persistido en
   /audits/:id/run-scan` sin pasar `asset_ids`: escanea todos los activos
   verificados de la organización, no solo los vinculados a esa auditoría
   puntual (comportamiento heredado del endpoint, no nuevo de este botón).
-- La cuota de 3 escaneos del Piloto Invitado cuenta `scan_runs` (escaneos
-  ya *completados*), no requests en curso: varias llamadas a
-  `POST /run-scan` disparadas antes de que la primera termine podrían
-  encolarse por encima de 3 en una ventana muy angosta. No aplica a la
-  cuota de storage, que sí se valida contra el tamaño acumulado real antes
-  de aceptar cada subida.
 - El correo de delegación a TI (`POST /assets/:id/delegate-verification`)
   sigue el mismo patrón "preparado pero no conectado" que el resto de los
   emails del sistema: sin `RESEND_API_KEY`, el asunto/contenido queda en el

@@ -97,28 +97,7 @@ export async function authenticateToken(
     return;
   }
 
-  let role = profile.role as UserRole;
-
-  // Degradación autónoma del Piloto Invitado: en cuanto expira, la
-  // siguiente request con ese token lo baja a 'viewer' — no depende de que
-  // corra un job nocturno. La policy de RLS con expires_at (migración 013)
-  // es la red de seguridad para la ventana entre que expira y esta
-  // request; acá se persiste el cambio para que quede reflejado en la UI
-  // (badge, /users/me) y no vuelva a evaluarse en cada request siguiente.
-  if (role === "auditor_guest" && profile.expires_at && new Date(profile.expires_at) <= new Date()) {
-    await supabaseAdmin.from("profiles").update({ role: "viewer" }).eq("id", profile.id);
-    role = "viewer";
-    await logAuditEvent({
-      organizationId: profile.organization_id,
-      actorId: null,
-      action: AUDIT_ACTIONS.GUEST_ROLE_EXPIRED,
-      resourceType: "user",
-      resourceId: profile.id,
-      payloadBefore: { role: "auditor_guest" },
-      payloadAfter: { role: "viewer" },
-      ...requestContext(req),
-    });
-  }
+  const role = profile.role as UserRole;
 
   req.profile = {
     id: profile.id,

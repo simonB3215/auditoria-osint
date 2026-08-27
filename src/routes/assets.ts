@@ -28,7 +28,7 @@ const MAX_ASSETS_PER_ORGANIZATION = env.MAX_ASSETS_PER_ORG;
 assetsRouter.post(
   "/assets",
   authenticateToken,
-  requireRole(["ciso", "auditor", "auditor_guest"]),
+  requireRole(["ciso", "auditor"]),
   asyncHandler(async (req, res) => {
     const body = assetInputSchema.parse(req.body);
     const profile = req.profile!;
@@ -191,7 +191,7 @@ assetsRouter.delete(
 assetsRouter.post(
   "/assets/:id/verify",
   authenticateToken,
-  requireRole(["ciso", "auditor", "auditor_guest"]),
+  requireRole(["ciso", "auditor"]),
   validateUuidParams("id"),
   asyncHandler(async (req, res) => {
     const profile = req.profile!;
@@ -272,7 +272,7 @@ const delegateVerificationSchema = z.object({
 assetsRouter.post(
   "/assets/:id/delegate-verification",
   authenticateToken,
-  requireRole(["ciso", "auditor", "auditor_guest"]),
+  requireRole(["ciso", "auditor"]),
   validateUuidParams("id"),
   sensitiveActionRateLimiter,
   asyncHandler(async (req, res) => {
