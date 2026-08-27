@@ -741,6 +741,40 @@ export const dictionaries = {
           "El binario del archivo se borra de forma segura de Storage; la fila queda marcada como purgada y conserva su metadata (quién la subió, cuándo) para fines legales.",
       },
     },
+    cookieConsent: {
+      banner: {
+        title: "Usamos cookies",
+        description:
+          "Usamos cookies estrictamente necesarias para que la plataforma funcione, como mantener tu sesión iniciada. Las categorías opcionales están desactivadas por defecto.",
+        acceptAll: "Aceptar todas",
+        rejectNonEssential: "Rechazar no esenciales",
+        customize: "Personalizar",
+      },
+      dialog: {
+        title: "Preferencias de cookies",
+        description:
+          "Elige qué categorías de cookies permites. Las estrictamente necesarias no se pueden desactivar: sin ellas, la plataforma no funciona.",
+        requiredBadge: "Siempre activa",
+        saveSelection: "Guardar selección",
+        acceptAll: "Aceptar todas",
+        policyLink: "Ver Política de Cookies",
+      },
+      categories: {
+        necessary: {
+          label: "Estrictamente necesarias",
+          description:
+            "Cookies indispensables para mantener tu sesión iniciada y para que la plataforma funcione. No se pueden desactivar.",
+        },
+        analytics: {
+          label: "Analítica",
+          description:
+            "Nos permitiría entender cómo se usa la plataforma para mejorarla. Por ahora esta categoría no carga ningún script; actívala si quieres dejar tu preferencia guardada para cuando exista.",
+        },
+      },
+      reopenTrigger: {
+        label: "Preferencias de cookies",
+      },
+    },
   },
   en: {
     common: {
@@ -1471,6 +1505,40 @@ export const dictionaries = {
         loadFailed: "Couldn't load retention settings",
         gdprNote:
           "The file's binary is securely deleted from Storage; the row stays marked as purged and keeps its metadata (who uploaded it, when) for legal purposes.",
+      },
+    },
+    cookieConsent: {
+      banner: {
+        title: "We use cookies",
+        description:
+          "We use strictly necessary cookies to make the platform work, such as keeping you signed in. Optional categories are off by default.",
+        acceptAll: "Accept all",
+        rejectNonEssential: "Reject non-essential",
+        customize: "Customize",
+      },
+      dialog: {
+        title: "Cookie preferences",
+        description:
+          "Choose which cookie categories you allow. Strictly necessary cookies can't be turned off — the platform doesn't work without them.",
+        requiredBadge: "Always active",
+        saveSelection: "Save selection",
+        acceptAll: "Accept all",
+        policyLink: "View Cookie Policy",
+      },
+      categories: {
+        necessary: {
+          label: "Strictly necessary",
+          description:
+            "Cookies required to keep you signed in and make the platform work. They can't be turned off.",
+        },
+        analytics: {
+          label: "Analytics",
+          description:
+            "Would help us understand platform usage to improve it. This category doesn't load any script yet; enable it if you want your preference saved for when it exists.",
+        },
+      },
+      reopenTrigger: {
+        label: "Cookie preferences",
       },
     },
   },

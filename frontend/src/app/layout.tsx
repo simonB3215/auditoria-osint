@@ -4,6 +4,7 @@ import "./globals.css";
 import { I18nProvider } from "@/lib/i18n/context";
 import { ThemeProvider } from "@/lib/theme/context";
 import { ToastProvider } from "@/hooks/use-toast";
+import { CookieConsentProvider } from "@/lib/cookieConsent/context";
 
 // Script bloqueante (corre antes de que React hidrate) para aplicar el
 // tema guardado sin flash de contenido sin estilo — ThemeProvider hace lo
@@ -56,7 +57,9 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         <ThemeProvider>
           <I18nProvider>
-            <ToastProvider>{children}</ToastProvider>
+            <ToastProvider>
+              <CookieConsentProvider>{children}</CookieConsentProvider>
+            </ToastProvider>
           </I18nProvider>
         </ThemeProvider>
       </body>
