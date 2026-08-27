@@ -11,6 +11,13 @@ const envSchema = z.object({
   // Secret key (sb_secret_...) o, en proyectos viejos, la service_role key legacy.
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   REDIS_URL: z.string().min(1),
+  // Conexión directa a Postgres — hoy solo la lee `db/run-migrations.ts`
+  // (npm run db:migrate), la API no la usa en runtime. Se valida acá de
+  // todas formas, como requerida (prompts.md, "Parte 2 - Cierre del
+  // schema de Zod"): antes no estaba en este schema y su ausencia recién
+  // se notaba al correr una migración, en vez de al arrancar cualquier
+  // cosa — falla rápido y en un solo lugar en vez de tarde y disperso.
+  DATABASE_URL: z.string().min(1),
   EVIDENCE_BUCKET: z.string().default("evidences"),
   REPORTS_BUCKET: z.string().default("reports"),
   // Límite duro de activos por organización (plan MVP). Configurable sin
@@ -41,6 +48,12 @@ const envSchema = z.object({
   EVIDENCE_ENCRYPTION_KEY: z
     .string()
     .regex(/^[0-9a-fA-F]{64}$/, "Debe ser una clave hexadecimal de 64 caracteres (32 bytes)"),
+  // OPCIONAL a propósito (prompts.md, "Parte 2 - Cierre del schema de
+  // Zod"): el envío de emails es best-effort ("preparado pero no
+  // conectado" — ver emailTemplates.ts). Su ausencia es un estado válido
+  // que activa el fallback de log en consola, no un error de
+  // configuración — hacerla requerida rompería ese diseño.
+  RESEND_API_KEY: z.string().min(1).optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

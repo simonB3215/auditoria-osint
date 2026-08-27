@@ -1253,6 +1253,68 @@ dropeado. `auth.test.ts`/`multitenant.test.ts`/`evidences.test.ts`
 (login, aislamiento RLS, subida de evidencia) siguen pasando limpios
 contra la Supabase real para los tres roles restantes.
 
+### CI de tests y cierre del schema de Zod (prompts.md, "Parte 2 - Suite de integracion en CI (Redis + Supabase) y cierre del schema de Zod")
+Dos fases: inventario del entorno de test + propuesta de diseño (sin
+tocar nada), aplicar tras confirmación explícita del usuario.
+
+⚠️ **Hallazgo del inventario, no estaba anticipado**: `.env.test` local
+y `.env` de desarrollo apuntan al **mismo proyecto de Supabase**
+(`nfgumnvpolltfivttmud`) — el comentario en `tests/helpers/tenants.ts`
+que dice "proyecto Supabase DEDICADO a testing" no refleja la realidad
+de este repo. Es el peor caso de los dos que el propio prompt
+contemplaba. Reforcé la advertencia en `.env.test.example` con este
+hallazgo explícito, para quien arme un `.env.test` nuevo desde ahí. No
+lo "arreglé" creando un proyecto nuevo — no puedo provisionar
+infraestructura cloud a tu nombre; te lo señalé para que decidas.
+
+**Diseño elegido — Opción A (stack de Supabase local y efímero en el
+runner, `supabase start`)**, justamente reforzado por ese hallazgo: cero
+riesgo de colisión con datos reales, sin secrets de Supabase que
+gestionar en GitHub, sin infraestructura cloud nueva de tu lado.
+Investigué el patrón exacto contra la documentación oficial vigente de
+Supabase (no de memoria) antes de escribirlo, en particular la versión
+actual del CLI (`2.116.0`, confirmada contra
+github.com/supabase/cli/releases al momento de escribir esto) y el
+patrón documentado `supabase status -o env --override-name` (más
+confiable que parsear `-o json`, cuyo formato de campos el propio
+Supabase reporta como inestable entre versiones — supabase/cli#4675).
+
+`.github/workflows/tests.yml` (nuevo, separado de `gitleaks.yml` — no se
+tocó ese workflow): Redis como `services:` container, `supabase/setup-cli@v3`
+con versión fijada, `supabase init` + `supabase start --ignore-health-check`
+(workaround documentado para el healthcheck flaky en runners de CI —
+supabase/cli#2456), `timeout-minutes: 20` como backstop duro, y las
+credenciales del stack local se escriben a un archivo `.env` (no
+`.env.test` — en un runner efímero no hay distinción real entre ambos, y
+así lo recogen sin plomería extra tanto `db/run-migrations.ts`/`db/setup-storage.ts`
+como el fallback de `tests/loadEnv.ts`).
+
+**Cierre del schema de Zod** (`src/config/env.ts`): `DATABASE_URL` ahora
+requerida (antes no estaba validada — su ausencia solo se notaba al
+correr una migración, no al arrancar); `RESEND_API_KEY` opcional a
+propósito (mantiene el patrón "preparado pero no conectado", no debía
+ser requerida). Esto rompía `npm test` en local porque `.env.test` no
+tenía `DATABASE_URL` — se agregó copiando el mismo valor de `.env` (son
+el mismo proyecto de todas formas, ver el hallazgo de arriba). `.env*.example`
+actualizados. ⚠️ **Nota de manejo de secretos**: al agregar esa línea a
+`.env.test`, una notificación automática del entorno de trabajo mostró
+el valor completo de `DATABASE_URL` (con password) en esta sesión —
+igual que un incidente similar de una fase anterior con `REDIS_URL`,
+`.env`/`.env.test` nunca se tocaron para commit y siguen ignorados, pero
+señalo la exposición para que evalúes rotar esa credencial de Postgres
+por precaución.
+
+**Verificado**: `tsc --noEmit` y `npm run build` limpios en ambos lados.
+Suite local: 11 pass, 1 fail (mismo TC-10 por falta de Redis local fuera
+de CI, causa ya documentada) — sin fallos nuevos, confirmado con una
+segunda corrida completa después de que la primera mostrara un timeout
+transitorio real en `multitenant.test.ts` (conectividad de Supabase, no
+relacionado a estos cambios — no se reprodujo). El workflow en sí **no
+se pudo validar de punta a punta en este entorno** (sin Docker
+corriendo localmente ni acceso a `gh` para observar una corrida real) —
+queda pendiente del primer push/PR real, tal como preveía el propio
+prompt para este caso.
+
 ### Seguridad
 - Evidencias cifradas (AES-256-GCM) antes de subir a Storage.
 - Buckets privados; los reportes se sirven vía signed URL temporal.
