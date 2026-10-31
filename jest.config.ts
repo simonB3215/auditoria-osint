@@ -17,6 +17,10 @@ const config: Config = {
   // encolan jobs en Redis; correrlos en serie evita carreras entre tests
   // que comparten organizaciones/activos de prueba.
   maxWorkers: 1,
+  // Las colas de BullMQ y sus conexiones a Redis se abren al importar la app
+  // y viven tanto como el proceso. Sin esto, Jest no termina al acabar la
+  // suite y el CI queda colgado hasta su límite de tiempo.
+  forceExit: true,
 };
 
 export default config;
