@@ -124,6 +124,7 @@ URLs de Supabase.
 | `npm run build` / `npm start` | Build de producción + arranque |
 | `npm run typecheck` | Solo chequeo de tipos |
 | `npm run worker:scan` | Worker que consume la cola de escaneos |
+| `npm run worker:osint` | Worker del reconocimiento pasivo (Módulo C). Va aparte del de escaneo y no necesita nmap |
 | `npm run worker:retention` | Worker que purga evidencias vencidas (corre diario vía BullMQ Job Scheduler; también se puede disparar manual con `POST /admin/retention/run-now`) |
 | `npm run worker:economic-indicators` | Worker que refresca UF/UTM/Dólar desde Mindicador.cl (corre diario a las 08:00 America/Santiago vía BullMQ Job Scheduler; el endpoint del panel también refresca al vuelo si el caché tiene más de 1h) |
 | `npm run db:migrate` | Aplica `schema.sql` + migraciones pendientes |

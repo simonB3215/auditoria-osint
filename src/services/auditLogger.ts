@@ -53,6 +53,12 @@ export const AUDIT_ACTIONS = {
   SUBDOMAIN_ENABLED: "SUBDOMAIN_ENABLED",
   SUBDOMAIN_ENABLE_BLOCKED: "SUBDOMAIN_ENABLE_BLOCKED",
   SCAN_ASSET_LIMIT_EXCEEDED: "SCAN_ASSET_LIMIT_EXCEEDED",
+  // Módulo C (reconocimiento pasivo).
+  OSINT_RUN_REQUESTED: "OSINT_RUN_REQUESTED",
+  OSINT_SOURCE_EXECUTED: "OSINT_SOURCE_EXECUTED",
+  OSINT_SOURCE_NOT_CONFIGURED: "OSINT_SOURCE_NOT_CONFIGURED",
+  UNAUTHORIZED_OSINT_BLOCKED: "UNAUTHORIZED_OSINT_BLOCKED",
+  OSINT_DATA_PURGED: "OSINT_DATA_PURGED",
 } as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
 
@@ -65,7 +71,8 @@ export type AuditResourceType =
   | "scan"
   | "asset"
   | "auth"
-  | "audit";
+  | "audit"
+  | "osint";
 
 interface LogAuditEventParams {
   organizationId: string | null;

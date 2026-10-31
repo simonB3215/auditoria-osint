@@ -9,6 +9,7 @@ import { evidencesRouter } from "./routes/evidences.js";
 import { assetsRouter } from "./routes/assets.js";
 import { domainVerificationRouter } from "./routes/domainVerification.js";
 import { scansRouter } from "./routes/scans.js";
+import { osintRouter } from "./routes/osint.js";
 import { reportsRouter } from "./routes/reports.js";
 import { findingsRouter } from "./routes/findings.js";
 import { dashboardRouter } from "./routes/dashboard.js";
@@ -43,6 +44,7 @@ export function createApp(): Express {
   app.use("/api/v1", assetsRouter);
   app.use("/api/v1", domainVerificationRouter);
   app.use("/api/v1", scansRouter);
+  app.use("/api/v1", osintRouter);
   app.use("/api/v1", reportsRouter);
   app.use("/api/v1", findingsRouter);
   app.use("/api/v1", dashboardRouter);

@@ -69,6 +69,16 @@ const envSchema = z.object({
   SIGNATURE_VALIDATOR_URL: z.string().url().optional(),
   SIGNATURE_VALIDATOR_API_KEY: z.string().min(1).optional(),
   DOMAIN_DECLARATION_BUCKET: z.string().default("domain-declarations"),
+  // Módulo C (OSINT). Todo opcional: sin HIBP_API_KEY la fuente de brechas queda
+  // "preparada pero no conectada". Las URL se pueden cambiar para los tests.
+  HIBP_API_KEY: z.string().min(1).optional(),
+  OSINT_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
+  OSINT_CACHE_TTL_HOURS: z.coerce.number().int().positive().default(24),
+  OSINT_MAX_SUBDOMAINS: z.coerce.number().int().positive().default(200),
+  MAX_CONCURRENT_OSINT_RUNS_PER_ORG: z.coerce.number().int().positive().default(1),
+  OSINT_CRTSH_BASE_URL: z.string().url().default("https://crt.sh"),
+  OSINT_WAYBACK_BASE_URL: z.string().url().default("https://web.archive.org"),
+  OSINT_HIBP_BASE_URL: z.string().url().default("https://haveibeenpwned.com/api/v3"),
 });
 
 const parsed = envSchema.safeParse(process.env);

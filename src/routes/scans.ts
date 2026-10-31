@@ -1,5 +1,4 @@
 import { Router } from "express";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { authenticateToken, requireRole } from "../middlewares/auth.js";
 import { sensitiveActionRateLimiter } from "../middlewares/security.js";
@@ -10,37 +9,7 @@ import { scanQueue, countActiveOrgScans, type ScanTargetAsset } from "../jobs/sc
 import { validateUuidParams } from "../middlewares/validateParams.js";
 import { AUDIT_ACTIONS, logAuditEvent, requestContext } from "../services/auditLogger.js";
 import { env } from "../config/env.js";
-
-const SCAN_ASSET_SELECT = "id, type, value, verification_status, parent_asset_id";
-
-interface ScanAssetRow {
-  id: string;
-  type: string;
-  value: string;
-  verification_status: string;
-  parent_asset_id: string | null;
-  parent?: { value: string; verification_status: string };
-}
-
-/**
- * Trae aparte el dominio padre de cada subdominio: PostgREST no detecta la
- * relación del activo consigo mismo por la FK compuesta de la migración 024.
- * Un padre que no vuelve se trata como no verificado.
- */
-async function attachParents(supabase: SupabaseClient, assets: ScanAssetRow[]): Promise<ScanAssetRow[]> {
-  const parentIds = [...new Set(assets.flatMap((a) => (a.parent_asset_id ? [a.parent_asset_id] : [])))];
-  if (parentIds.length === 0) return assets;
-
-  const { data, error } = await supabase.from("assets").select("id, value, verification_status").in("id", parentIds);
-  if (error) throw new AppError(400, "ASSETS_FETCH_FAILED", error.message);
-
-  const parents = new Map((data ?? []).map((parent) => [parent.id, parent]));
-  return assets.map((a) =>
-    a.parent_asset_id
-      ? { ...a, parent: parents.get(a.parent_asset_id) ?? { value: "", verification_status: "pending" } }
-      : a
-  );
-}
+import { attachParents, TARGET_ASSET_SELECT, type TargetAssetRow } from "../services/assetParents.js";
 
 export const scansRouter = Router();
 
@@ -76,7 +45,7 @@ scansRouter.post(
       throw new AppError(409, "SCAN_ALREADY_IN_PROGRESS", "Ya hay un escaneo en curso para esta auditoría");
     }
 
-    let assets: ScanAssetRow[] = [];
+    let assets: TargetAssetRow[] = [];
 
     if (body.asset_ids && body.asset_ids.length > 0) {
       // Security gate explícito (a.md, sección "Security Gate"): si el
@@ -95,12 +64,12 @@ scansRouter.post(
       // aborta TODA la solicitud con 403 y se audita el intento.
       const { data: requested, error: requestedError } = await supabase
         .from("assets")
-        .select(SCAN_ASSET_SELECT)
+        .select(TARGET_ASSET_SELECT)
         .in("id", body.asset_ids);
       if (requestedError) {
         throw new AppError(400, "ASSETS_FETCH_FAILED", requestedError.message);
       }
-      const requestedAssets = (requested ?? []) as ScanAssetRow[];
+      const requestedAssets = (requested ?? []) as TargetAssetRow[];
       const returnedIds = new Set(requestedAssets.map((a) => a.id));
       const notOwnedIds = body.asset_ids.filter((id) => !returnedIds.has(id));
       const unverified = requestedAssets.filter((a) => a.verification_status !== "verified");
@@ -134,12 +103,12 @@ scansRouter.post(
     } else {
       const { data, error: assetsError } = await supabase
         .from("assets")
-        .select(SCAN_ASSET_SELECT)
+        .select(TARGET_ASSET_SELECT)
         .eq("verification_status", "verified");
       if (assetsError) {
         throw new AppError(400, "ASSETS_FETCH_FAILED", assetsError.message);
       }
-      assets = (data ?? []) as ScanAssetRow[];
+      assets = (data ?? []) as TargetAssetRow[];
 
       // Con más activos que el tope de un escaneo, valen los elegidos al crear
       // la auditoría. Por debajo del tope el comportamiento no cambia.
