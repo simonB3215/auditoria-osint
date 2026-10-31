@@ -12,8 +12,8 @@ export interface TestUser {
   role: TestRole;
 }
 
-function uniqueEmail(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@test.aegis.local`;
+function uniqueEmail(prefix: string, domain: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@${domain}`;
 }
 
 export async function createOrganization(name: string): Promise<string> {
@@ -37,9 +37,10 @@ export async function createOrganization(name: string): Promise<string> {
 export async function createTestUser(
   organizationId: string,
   emailPrefix: string,
-  role: TestRole
+  role: TestRole,
+  emailDomain = "test.aegis.local"
 ): Promise<TestUser> {
-  const email = uniqueEmail(emailPrefix);
+  const email = uniqueEmail(emailPrefix, emailDomain);
   const password = "TestPass123!Secure";
 
   const { data: userData, error: userError } = await supabaseAdmin.auth.admin.createUser({

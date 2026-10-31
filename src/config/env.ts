@@ -54,6 +54,15 @@ const envSchema = z.object({
   // que activa el fallback de log en consola, no un error de
   // configuración — hacerla requerida rompería ese diseño.
   RESEND_API_KEY: z.string().min(1).optional(),
+  // Remitente del link de verificación de dominio. Sin esto y RESEND_API_KEY
+  // el link no se envía y el dominio queda sin verificar (pendiente P3).
+  EMAIL_FROM: z.string().min(1).optional(),
+  RESEND_API_URL: z.string().url().optional(),
+  // Proveedor de firma electrónica avanzada (pendiente P2). Sin URL, ninguna
+  // declaración se acepta: ver services/signatureValidator.ts.
+  SIGNATURE_VALIDATOR_URL: z.string().url().optional(),
+  SIGNATURE_VALIDATOR_API_KEY: z.string().min(1).optional(),
+  DOMAIN_DECLARATION_BUCKET: z.string().default("domain-declarations"),
 });
 
 const parsed = envSchema.safeParse(process.env);

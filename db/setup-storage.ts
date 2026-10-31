@@ -13,6 +13,7 @@ const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 const BUCKETS = [
   { id: process.env.EVIDENCE_BUCKET ?? "evidences", fileSizeLimit: "20MB" },
   { id: process.env.REPORTS_BUCKET ?? "reports", fileSizeLimit: "10MB" },
+  { id: process.env.DOMAIN_DECLARATION_BUCKET ?? "domain-declarations", fileSizeLimit: "11MB" },
 ];
 
 async function main() {

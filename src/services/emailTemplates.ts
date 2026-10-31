@@ -70,6 +70,70 @@ export async function sendDomainDelegationEmail(to: string, params: DomainDelega
 }
 
 /**
+ * Link para confirmar que se controla el correo del dominio declarado. Abrir
+ * este link es parte de la verificación, así que a diferencia de los demás
+ * correos NUNCA se registra en consola ni se guarda fuera del propio envío.
+ */
+export interface DomainVerificationLinkEmailParams {
+  domain: string;
+  confirmUrl: string;
+  expiresInHours: number;
+}
+
+export function buildDomainVerificationLinkEmail(params: DomainVerificationLinkEmailParams): EmailTemplate {
+  const subject = `Confirmá el dominio ${params.domain} en Aegis CyberAudit`;
+  const text =
+    `Hola,\n\n` +
+    `Tu organización declaró ser dueña del dominio ${params.domain} en Aegis CyberAudit. ` +
+    `Para confirmar que controlás este correo, abrí este link (vence en ${params.expiresInHours} horas y sirve una sola vez):\n\n` +
+    `${params.confirmUrl}\n\n` +
+    `Si no fuiste vos, ignorá este correo: el dominio no se va a verificar.\n\n` +
+    `— El equipo de Aegis CyberAudit`;
+  const html =
+    `<p>Hola,</p>` +
+    `<p>Tu organización declaró ser dueña del dominio <strong>${params.domain}</strong> en Aegis CyberAudit. ` +
+    `Para confirmar que controlás este correo, abrí este link (vence en ${params.expiresInHours} horas y sirve una sola vez):</p>` +
+    `<p><a href="${params.confirmUrl}">Confirmar el dominio</a></p>` +
+    `<p>Si no fuiste vos, ignorá este correo: el dominio no se va a verificar.</p>` +
+    `<p>— El equipo de Aegis CyberAudit</p>`;
+  return { subject, html, text };
+}
+
+/**
+ * Devuelve si el correo salió. Sin `RESEND_API_KEY` y `EMAIL_FROM` (pendiente
+ * P3) no sale nada y devuelve false: quien llama no debe dejar un link vivo.
+ */
+export async function sendDomainVerificationLinkEmail(
+  to: string,
+  params: DomainVerificationLinkEmailParams
+): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.EMAIL_FROM;
+  if (!apiKey || !from) {
+    console.log(`[email:not-configured] Link de dominio sin enviar | Dominio: ${params.domain}`);
+    return false;
+  }
+
+  const template = buildDomainVerificationLinkEmail(params);
+  try {
+    const response = await fetch(process.env.RESEND_API_URL ?? "https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ from, to: [to], subject: template.subject, html: template.html, text: template.text }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) {
+      console.error(`[email] Resend respondió ${response.status} | Dominio: ${params.domain}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(`[email] no se pudo enviar | Dominio: ${params.domain}:`, err instanceof Error ? err.message : err);
+    return false;
+  }
+}
+
+/**
  * Notificación de escaneo completado (a.md, "MVP: REGLAS DE NEGOCIO,
  * AUTENTICACIÓN Y MEJORAS DE UX/UI" — "enviar un correo únicamente
  * cuando: 1. el escaneo pase a Completado, 2. se detecte al menos un

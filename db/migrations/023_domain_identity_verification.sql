@@ -8,8 +8,10 @@
 -- y el TXT se retira en V3. `assets.verification_token` se mantiene hasta
 -- entonces.
 --
--- Solo se guarda el path y el hash de los documentos. El bucket y el
--- cifrado llegan en V2, igual que su retención.
+-- Solo se guarda el path y el hash de los documentos: el archivo va cifrado
+-- en su propio bucket (ver src/services/domainDeclarationDocuments.ts). Son
+-- la prueba de la autorización, así que su plazo de retención queda para la
+-- revisión legal (pendiente P1) y todavía no se purgan.
 -- ============================================================
 
 -- La 021 eliminó `rut` porque ningún formulario lo capturaba: ahora la
@@ -29,6 +31,7 @@ create table domain_ownership_declarations (
     id                      uuid primary key default uuid_generate_v4(),
     organization_id         uuid not null references organizations(id) on delete cascade,
     submitted_by            uuid references profiles(id) on delete set null,
+    organization_rut        text not null check (organization_rut ~ '^[0-9]{7,8}-[0-9Kk]$'),
     signer_rut              text not null check (signer_rut ~ '^[0-9]{7,8}-[0-9Kk]$'),
     declaration_version     text not null,
     signed_document_path    text not null,
