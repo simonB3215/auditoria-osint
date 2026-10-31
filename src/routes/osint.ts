@@ -194,3 +194,73 @@ osintRouter.get(
     res.status(200).json({ data: { latest: runs?.[0] ?? null, history: runs ?? [] } });
   })
 );
+
+/**
+ * Subdominios de la última corrida terminada. `registered` se calcula al leer,
+ * porque el usuario puede registrar el activo después de la corrida.
+ */
+osintRouter.get(
+  "/audits/:auditId/osint/subdomains",
+  authenticateToken,
+  validateUuidParams("auditId"),
+  asyncHandler(async (req, res) => {
+    const supabase = supabaseForUser(req.profile!.accessToken);
+    const auditId = req.params.auditId as string;
+
+    const { data: audit, error: auditError } = await supabase.from("audits").select("id").eq("id", auditId).maybeSingle();
+    if (auditError) throw new AppError(400, "AUDIT_FETCH_FAILED", auditError.message);
+    if (!audit) throw new AppError(404, "AUDIT_NOT_FOUND", "Auditoría no encontrada");
+
+    const { data: run, error: runError } = await supabase
+      .from("osint_runs")
+      .select("id")
+      .eq("audit_id", auditId)
+      .in("status", ["completed", "partial"])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (runError) throw new AppError(400, "OSINT_RUNS_FETCH_FAILED", runError.message);
+    if (!run) {
+      res.status(200).json({ data: [] });
+      return;
+    }
+
+    const [{ data: subdomains, error: subdomainsError }, { data: assets, error: assetsError }] = await Promise.all([
+      supabase
+        .from("osint_discovered_subdomains")
+        .select("id, hostname, first_seen, last_seen, resolved_ips, behind_cdn, status, parent_asset_id")
+        .eq("osint_run_id", run.id)
+        .order("hostname"),
+      supabase.from("assets").select("value"),
+    ]);
+    if (subdomainsError) throw new AppError(400, "OSINT_SUBDOMAINS_FETCH_FAILED", subdomainsError.message);
+    if (assetsError) throw new AppError(400, "ASSETS_FETCH_FAILED", assetsError.message);
+
+    const registered = new Set((assets ?? []).map((asset) => asset.value.toLowerCase()));
+    res.status(200).json({
+      data: (subdomains ?? []).map((row) => ({ ...row, registered: registered.has(row.hostname.toLowerCase()) })),
+    });
+  })
+);
+
+const updateSubdomainSchema = z.object({ status: z.enum(["new", "dismissed"]) });
+
+osintRouter.patch(
+  "/osint/subdomains/:id",
+  authenticateToken,
+  requireRole(["ciso", "auditor"]),
+  validateUuidParams("id"),
+  asyncHandler(async (req, res) => {
+    const body = updateSubdomainSchema.parse(req.body);
+    const { data, error } = await supabaseForUser(req.profile!.accessToken)
+      .from("osint_discovered_subdomains")
+      .update({ status: body.status })
+      .eq("id", req.params.id)
+      .select("id, hostname, status")
+      .maybeSingle();
+    if (error) throw new AppError(400, "OSINT_SUBDOMAIN_UPDATE_FAILED", error.message);
+    if (!data) throw new AppError(404, "OSINT_SUBDOMAIN_NOT_FOUND", "Subdominio no encontrado");
+
+    res.status(200).json({ data });
+  })
+);

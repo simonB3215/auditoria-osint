@@ -18,6 +18,8 @@ export interface OsintSourceResult {
   /** Se respondió desde `osint_source_cache`, sin consultar la fuente. */
   cached?: boolean;
   findings?: NormalizedFinding[];
+  /** Resumen acotado y sin datos personales: va a `osint_runs.summary`. */
+  summary?: Record<string, unknown>;
 }
 
 /**

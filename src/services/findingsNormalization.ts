@@ -117,3 +117,192 @@ export function normalizeHeaderFindings(
     remediation: `Agregar la cabecera "${f.header}" a las respuestas del servidor web.`,
   }));
 }
+
+// ------------------------------------------------------------
+// Módulo C (OSINT). Ninguno es `critical`: son señales indirectas de fuentes
+// públicas, no hallazgos confirmados. Los títulos no llevan datos variables,
+// porque identifican al hallazgo al repetir una corrida en la misma auditoría.
+// ------------------------------------------------------------
+
+export interface DnsLookup {
+  status: "found" | "none" | "error";
+  records: string[];
+}
+
+export interface EmailDnsPosture {
+  spf: DnsLookup;
+  dmarc: DnsLookup;
+  mx: DnsLookup;
+  dkimSelectors: string[];
+  /** Todas las consultas de selectores respondieron. */
+  dkimComplete: boolean;
+}
+
+const MAX_SPF_LOOKUPS = 10;
+
+function dmarcTag(record: string, tag: string): string | undefined {
+  return new RegExp(`(?:^|;)\\s*${tag}\\s*=\\s*([^;]+)`, "i").exec(record)?.[1]?.trim().toLowerCase();
+}
+
+/**
+ * Solo cuenta `status: "none"` como registro ausente: una consulta caída no
+ * permite afirmar nada. Las consultas SPF se cuentan en el registro raíz, sin
+ * seguir cada `include`, así que el conteo real puede ser mayor.
+ */
+export function buildEmailDnsFindings(
+  auditId: string,
+  assetId: string,
+  domain: string,
+  posture: EmailDnsPosture
+): { findings: NormalizedFinding[]; summary: Record<string, unknown> } {
+  const findings: NormalizedFinding[] = [];
+  const add = (title: string, severity: FindingSeverity, detail: string, remediation: string) =>
+    findings.push({ audit_id: auditId, asset_id: assetId, source_engine: "osint-email-dns", title, severity, detail, remediation });
+
+  const spfRecords = posture.spf.records.filter((record) => /^v=spf1(\s|$)/i.test(record.trim()));
+  const spf = spfRecords[0];
+  if (posture.spf.status !== "error") {
+    if (spfRecords.length === 0) {
+      add(
+        "Sin registro SPF",
+        "high",
+        `${domain} no publica SPF: cualquiera puede enviar correo a su nombre sin que los destinatarios puedan comprobarlo.`,
+        'Publicar un registro TXT SPF con los servidores autorizados, terminado en "-all" o "~all".'
+      );
+    } else if (spfRecords.length > 1) {
+      add(
+        "Más de un registro SPF",
+        "medium",
+        `${domain} publica ${spfRecords.length} registros SPF, y con más de uno SPF falla en la validación.`,
+        "Unificar todo en un solo registro SPF."
+      );
+    } else if (/(^|\s)\+all(\s|$)/i.test(spf!)) {
+      add(
+        "SPF permite enviar desde cualquier servidor",
+        "high",
+        `El SPF de ${domain} termina en "+all", así que autoriza a cualquier servidor.`,
+        'Reemplazar "+all" por "-all" o "~all", listando los servidores autorizados.'
+      );
+    } else if (!/(^|\s)[-~]all(\s|$)/i.test(spf!)) {
+      add(
+        "SPF no bloquea remitentes no autorizados",
+        "medium",
+        `El SPF de ${domain} no termina en "-all" ni "~all", así que no indica qué hacer con otros remitentes.`,
+        'Terminar el registro SPF en "-all" o "~all".'
+      );
+    } else {
+      const lookups = spf!.match(/(^|\s)[+?~-]?(include:|a(:|\s|$)|mx(:|\s|$)|ptr(:|\s|$)|exists:|redirect=)/gi)?.length ?? 0;
+      if (lookups > MAX_SPF_LOOKUPS) {
+        add(
+          "SPF con más de 10 consultas DNS",
+          "medium",
+          `El SPF de ${domain} usa ${lookups} mecanismos con consulta DNS. Por encima de 10, la validación SPF falla.`,
+          "Reducir los mecanismos include, a y mx del registro SPF."
+        );
+      }
+    }
+  }
+
+  const dmarc = posture.dmarc.records.find((record) => /^v=DMARC1/i.test(record.trim()));
+  const dmarcPolicy = dmarc ? dmarcTag(dmarc, "p") : undefined;
+  if (posture.dmarc.status !== "error") {
+    if (!dmarc) {
+      add(
+        "Sin registro DMARC",
+        "high",
+        `${domain} no publica DMARC: los destinatarios no saben qué hacer con correo falsificado a su nombre.`,
+        'Publicar DMARC en _dmarc con "p=none" y "rua" para recibir reportes, y avanzar a "p=quarantine" y luego "p=reject".'
+      );
+    } else if (dmarcPolicy === "none" || !dmarcPolicy) {
+      add(
+        "DMARC solo observa y no bloquea",
+        "medium",
+        `El DMARC de ${domain} no pide rechazar ni aislar el correo que falla la validación.`,
+        'Revisar los reportes y avanzar a "p=quarantine" y luego "p=reject".'
+      );
+    } else {
+      const pct = Number(dmarcTag(dmarc, "pct") ?? 100);
+      if (pct < 100) {
+        add(
+          "DMARC se aplica solo a parte del correo",
+          "low",
+          `El DMARC de ${domain} se aplica al ${pct} % del correo.`,
+          'Subir "pct" a 100 o quitarlo.'
+        );
+      }
+      if (!dmarcTag(dmarc, "rua")) {
+        add(
+          "DMARC sin dirección de reportes",
+          "low",
+          `El DMARC de ${domain} no tiene "rua", así que no se reciben reportes de quién envía a su nombre.`,
+          'Agregar "rua=mailto:" con una casilla para recibir reportes.'
+        );
+      }
+    }
+  }
+
+  if (posture.dkimComplete && posture.dkimSelectors.length === 0) {
+    add(
+      "No se encontró DKIM en los selectores habituales",
+      "low",
+      `No apareció una clave DKIM en los selectores habituales de ${domain}. Puede usar otro selector: esto no prueba que no tenga DKIM.`,
+      "Confirmar con el proveedor de correo que DKIM esté activo."
+    );
+  }
+
+  return {
+    findings,
+    summary: {
+      spf: spf ?? null,
+      dmarcPolicy: dmarcPolicy ?? null,
+      dkimSelectors: posture.dkimSelectors,
+      mx: posture.mx.records,
+    },
+  };
+}
+
+const SENSITIVE_SUBDOMAIN_LABEL = /^(dev|staging|test|admin|vpn|jenkins|git)(?:[-0-9]|$)/i;
+const MAX_HOSTS_IN_FINDING = 20;
+
+function listHosts(hosts: string[]): string {
+  const shown = hosts.slice(0, MAX_HOSTS_IN_FINDING).join(", ");
+  return hosts.length > MAX_HOSTS_IN_FINDING ? `${shown} y ${hosts.length - MAX_HOSTS_IN_FINDING} más` : shown;
+}
+
+/** Un hallazgo por dominio y tipo, en vez de uno por nombre: una lista larga no debe inundar el reporte. */
+export function buildCtFindings(
+  auditId: string,
+  assetId: string,
+  domain: string,
+  unregisteredHosts: string[]
+): NormalizedFinding[] {
+  if (unregisteredHosts.length === 0) return [];
+  const base = { audit_id: auditId, asset_id: assetId, source_engine: "osint-ct" };
+
+  const findings: NormalizedFinding[] = [
+    {
+      ...base,
+      title: "Subdominios públicos fuera del inventario",
+      severity: "low",
+      detail: `${unregisteredHosts.length} subdominio(s) de ${domain} aparecen en registros públicos de certificados y no están registrados como activos: ${listHosts(unregisteredHosts)}.`,
+      remediation: "Revisar cuáles siguen en uso, registrarlos como activos y dar de baja los que sobren.",
+    },
+  ];
+
+  const sensitive = unregisteredHosts.filter((host) =>
+    host
+      .slice(0, -(domain.length + 1))
+      .split(".")
+      .some((label) => SENSITIVE_SUBDOMAIN_LABEL.test(label))
+  );
+  if (sensitive.length > 0) {
+    findings.push({
+      ...base,
+      title: "Subdominios con nombre sensible",
+      severity: "medium",
+      detail: `Estos nombres sugieren entornos internos o de administración visibles públicamente: ${listHosts(sensitive)}.`,
+      remediation: "Confirmar que no deban ser públicos y restringir su acceso. Registrarlos como activos permite medir su exposición con el Módulo A.",
+    });
+  }
+  return findings;
+}

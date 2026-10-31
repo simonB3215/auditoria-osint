@@ -1539,6 +1539,10 @@ Todos bajo `/api/v1`, requieren `Authorization: Bearer <token>` salvo donde se i
 | GET | `/audits/:id/report` | Genera el reporte y devuelve `{ signedUrl, riskScore, coverage }` |
 | GET | `/audits/:id/anci-status` | Cumplimiento Ley 21.663: `{ sePercentage, oivPercentage, technicalControls }` |
 | GET | `/dashboard/summary` | Métricas agregadas para el dashboard |
+| POST | `/audits/:auditId/osint/run` | *(ciso, auditor)* Lanza el reconocimiento pasivo. Solo dominios verificados |
+| GET | `/audits/:auditId/osint` | Última corrida OSINT, estado por fuente e historial |
+| GET | `/audits/:auditId/osint/subdomains` | Subdominios de la última corrida, con `registered` calculado al leer |
+| PATCH | `/osint/subdomains/:id` | *(ciso, auditor)* Descarta un subdominio (`dismissed`) o lo reactiva (`new`) |
 | GET | `/admin/organizations` | *(platform admin)* Todas las organizaciones (entidad pura: plan, dominio principal, verificación DNS, storage) |
 | PATCH | `/admin/organizations/:id` | *(platform admin)* Edita nombre/plan de una organización |
 | PATCH | `/admin/organizations/:id/suspend` | *(platform admin)* Suspende/reactiva (archiva) una organización |

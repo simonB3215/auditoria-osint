@@ -1,4 +1,4 @@
-import { Resolver } from "node:dns/promises";
+import { createDnsResolver } from "./dnsResolver.js";
 
 const MAX_CNAME_DEPTH = 8;
 
@@ -23,8 +23,7 @@ export function isSubdomainOf(host: string, parent: string): boolean {
  * cerrado: sin una respuesta clara de DNS, el subdominio no se considera propio.
  */
 export async function checkSubdomainScope(subdomain: string, parentDomain: string): Promise<SubdomainScope> {
-  const resolver = new Resolver({ timeout: 5_000, tries: 2 });
-  if (process.env.DNS_RESOLVER_SERVER) resolver.setServers([process.env.DNS_RESOLVER_SERVER]);
+  const resolver = createDnsResolver();
 
   let current = normalizeHost(subdomain);
   for (let depth = 0; depth < MAX_CNAME_DEPTH; depth++) {

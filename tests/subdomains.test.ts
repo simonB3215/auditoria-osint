@@ -1,6 +1,5 @@
-import { createSocket, type Socket } from "node:dgram";
-import type { AddressInfo } from "node:net";
 import { api, bearer } from "./helpers/apiClient.js";
+import { startDnsStub, type DnsStub } from "./helpers/dnsStub.js";
 import { uniqueDomain } from "./helpers/domainVerification.js";
 import {
   createOrganization,
@@ -14,57 +13,8 @@ import { env } from "../src/config/env.js";
 import { supabaseAdmin, supabaseForUser } from "../src/config/supabase.js";
 import { checkSubdomainScope, isSubdomainOf } from "../src/services/subdomainScope.js";
 
-function encodeName(name: string): Buffer {
-  return Buffer.concat([
-    ...name.split(".").map((label) => Buffer.concat([Buffer.from([label.length]), Buffer.from(label)])),
-    Buffer.from([0]),
-  ]);
-}
-
-/**
- * Servidor DNS real por UDP: el código bajo prueba resuelve de verdad, como con
- * los servidores HTTP locales de los demás tests. Lo que no está en \`cnames\` ni
- * en \`nxdomain\` existe y no tiene CNAME.
- */
-async function startDnsStub(cnames: Map<string, string>, nxdomain: Set<string>): Promise<Socket> {
-  const socket = createSocket("udp4");
-  socket.on("message", (query, remote) => {
-    const labels: string[] = [];
-    let offset = 12;
-    while (query[offset] !== 0) {
-      const length = query[offset]!;
-      labels.push(query.subarray(offset + 1, offset + 1 + length).toString());
-      offset += length + 1;
-    }
-    const questionEnd = offset + 5;
-    const name = labels.join(".").toLowerCase();
-    const target = cnames.get(name);
-
-    const header = Buffer.alloc(12);
-    query.copy(header, 0, 0, 2);
-    header.writeUInt16BE(nxdomain.has(name) ? 0x8183 : 0x8180, 2);
-    header.writeUInt16BE(1, 4);
-    header.writeUInt16BE(target ? 1 : 0, 6);
-
-    const parts = [header, query.subarray(12, questionEnd)];
-    if (target) {
-      const rdata = encodeName(target);
-      const answer = Buffer.alloc(12);
-      answer.writeUInt16BE(0xc00c, 0);
-      answer.writeUInt16BE(5, 2);
-      answer.writeUInt16BE(1, 4);
-      answer.writeUInt32BE(60, 6);
-      answer.writeUInt16BE(rdata.length, 10);
-      parts.push(answer, rdata);
-    }
-    socket.send(Buffer.concat(parts), remote.port, remote.address);
-  });
-  await new Promise<void>((resolve) => socket.bind(0, "127.0.0.1", resolve));
-  return socket;
-}
-
 describe("Parte 1 (V5): subdominios desde el dominio padre", () => {
-  let dns: Socket;
+  let dns: DnsStub;
   let orgId: string;
   let otherOrgId: string;
   let ciso: TestUser;
@@ -100,8 +50,8 @@ describe("Parte 1 (V5): subdominios desde el dominio padre", () => {
     cnames.set(`mixto.${parent}`, `shop.${parent}`);
     nxdomain.add(`nada.${parent}`);
 
-    dns = await startDnsStub(cnames, nxdomain);
-    process.env.DNS_RESOLVER_SERVER = `127.0.0.1:${(dns.address() as AddressInfo).port}`;
+    dns = await startDnsStub({ cname: cnames, nxdomain });
+    process.env.DNS_RESOLVER_SERVER = dns.server;
 
     orgId = await createOrganization("QA Org - Subdominios");
     otherOrgId = await createOrganization("QA Org B - Subdominios");
