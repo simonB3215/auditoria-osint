@@ -55,6 +55,7 @@ describe("Parte 1 (V1): datos de la verificación de dominios", () => {
       .insert({
         organization_id: orgAId,
         submitted_by: cisoA.userId,
+        organization_rut: "22222222-2",
         signer_rut: "11111111-1",
         declaration_version: "borrador-1",
         signed_document_path: `${orgAId}/declaracion.pdf`,
@@ -207,6 +208,7 @@ describe("Parte 1 (V1): datos de la verificación de dominios", () => {
 
     const { error: insertError } = await supabase.from("domain_ownership_declarations").insert({
       organization_id: orgAId,
+      organization_rut: "22222222-2",
       signer_rut: "11111111-1",
       declaration_version: "borrador-1",
       signed_document_path: "x",
