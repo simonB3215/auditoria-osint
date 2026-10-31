@@ -27,7 +27,8 @@ const files = [
 async function main() {
   const client = new pg.Client({
     connectionString: databaseUrl,
-    ssl: { rejectUnauthorized: false },
+    // El stack local de Supabase (CI) no acepta SSL; el proyecto en la nube sí.
+    ssl: /@(localhost|127\.0\.0\.1)[:/]/.test(databaseUrl) ? false : { rejectUnauthorized: false },
   });
 
   await client.connect();
