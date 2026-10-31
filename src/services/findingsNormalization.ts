@@ -391,3 +391,32 @@ export function buildArchiveFindings(
     },
   };
 }
+
+/**
+ * Solo el conteo y los nombres de las brechas: el hallazgo llega al PDF, que se
+ * comparte, y las cuentas enmascaradas quedan en su tabla restringida. Sin
+ * `critical`: una brecha de un tercero no prueba un compromiso actual.
+ */
+export function buildBreachFindings(
+  auditId: string,
+  assetId: string,
+  domain: string,
+  accounts: number,
+  breaches: string[],
+  recent: boolean
+): { findings: NormalizedFinding[]; summary: Record<string, unknown> } {
+  return {
+    findings: [
+      {
+        audit_id: auditId,
+        asset_id: assetId,
+        source_engine: "osint-breach",
+        title: "Cuentas del dominio en brechas públicas",
+        severity: recent ? "high" : "medium",
+        detail: `${accounts} cuenta(s) de ${domain} aparecen en estas brechas públicas: ${breaches.join(", ")}. Fuente: Have I Been Pwned (haveibeenpwned.com).`,
+        remediation: "Pedir a esas cuentas que cambien sus contraseñas, no las reutilicen y activen la verificación en dos pasos.",
+      },
+    ],
+    summary: { accounts, breaches, recent },
+  };
+}

@@ -8,7 +8,7 @@ const worker = new Worker(
   async () => {
     const result = await runRetentionPurge();
     console.log(
-      `[retention-worker] ${result.organizationsScanned} organización(es) escaneada(s), ${result.evidencesPurged} evidencia(s) purgada(s)${result.failures.length > 0 ? `, ${result.failures.length} error(es)` : ""}`
+      `[retention-worker] ${result.organizationsScanned} organización(es) escaneada(s), ${result.evidencesPurged} evidencia(s) purgada(s), ${result.osintBreachRowsPurged} fila(s) de brechas y ${result.osintCacheRowsPurged} de caché OSINT borrada(s)${result.failures.length > 0 ? `, ${result.failures.length} error(es)` : ""}`
     );
     if (result.failures.length > 0) {
       console.error(`[retention-worker] errores:\n${result.failures.join("\n")}`);

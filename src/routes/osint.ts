@@ -264,3 +264,50 @@ osintRouter.patch(
     res.status(200).json({ data });
   })
 );
+
+/**
+ * Cuentas enmascaradas de la última corrida terminada con esta fuente. Solo para
+ * ciso y auditor: un `viewer` ve el hallazgo, con el conteo, pero no las cuentas.
+ */
+osintRouter.get(
+  "/audits/:auditId/osint/breaches",
+  authenticateToken,
+  requireRole(["ciso", "auditor"]),
+  validateUuidParams("auditId"),
+  asyncHandler(async (req, res) => {
+    const supabase = supabaseForUser(req.profile!.accessToken);
+    const auditId = req.params.auditId as string;
+
+    const { data: audit, error: auditError } = await supabase.from("audits").select("id").eq("id", auditId).maybeSingle();
+    if (auditError) throw new AppError(400, "AUDIT_FETCH_FAILED", auditError.message);
+    if (!audit) throw new AppError(404, "AUDIT_NOT_FOUND", "Auditoría no encontrada");
+
+    const { data: latest, error: latestError } = await supabase
+      .from("osint_breach_exposures")
+      .select("osint_run_id")
+      .eq("audit_id", auditId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latestError) throw new AppError(400, "OSINT_BREACHES_FETCH_FAILED", latestError.message);
+    if (!latest) {
+      res.status(200).json({ data: { accounts: 0, breaches: [], exposures: [] } });
+      return;
+    }
+
+    const { data: exposures, error } = await supabase
+      .from("osint_breach_exposures")
+      .select("alias_masked, breaches")
+      .eq("osint_run_id", latest.osint_run_id)
+      .order("alias_masked");
+    if (error) throw new AppError(400, "OSINT_BREACHES_FETCH_FAILED", error.message);
+
+    res.status(200).json({
+      data: {
+        accounts: exposures?.length ?? 0,
+        breaches: [...new Set((exposures ?? []).flatMap((exposure) => exposure.breaches as string[]))].sort(),
+        exposures: exposures ?? [],
+      },
+    });
+  })
+);

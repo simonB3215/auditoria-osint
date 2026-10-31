@@ -1543,6 +1543,7 @@ Todos bajo `/api/v1`, requieren `Authorization: Bearer <token>` salvo donde se i
 | GET | `/audits/:auditId/osint` | Última corrida OSINT, estado por fuente e historial |
 | GET | `/audits/:auditId/osint/subdomains` | Subdominios de la última corrida, con `registered` calculado al leer |
 | PATCH | `/osint/subdomains/:id` | *(ciso, auditor)* Descarta un subdominio (`dismissed`) o lo reactiva (`new`) |
+| GET | `/audits/:auditId/osint/breaches` | *(ciso, auditor)* Cuentas enmascaradas en brechas de la última corrida |
 | GET | `/admin/organizations` | *(platform admin)* Todas las organizaciones (entidad pura: plan, dominio principal, verificación DNS, storage) |
 | PATCH | `/admin/organizations/:id` | *(platform admin)* Edita nombre/plan de una organización |
 | PATCH | `/admin/organizations/:id/suspend` | *(platform admin)* Suspende/reactiva (archiva) una organización |
