@@ -5,7 +5,7 @@ import { authenticateToken, requireRole } from "../middlewares/auth.js";
 import { sensitiveActionRateLimiter } from "../middlewares/security.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../middlewares/errorHandler.js";
-import { supabaseForUser } from "../config/supabase.js";
+import { supabaseAdmin, supabaseForUser } from "../config/supabase.js";
 import { assetInputSchema } from "../validators/assetValidators.js";
 import { validateUuidParams } from "../middlewares/validateParams.js";
 import { env } from "../config/env.js";
@@ -199,7 +199,7 @@ assetsRouter.post(
 
     const { data: asset, error: fetchError } = await supabase
       .from("assets")
-      .select("id, type, value, verification_token, verification_status")
+      .select("id, type, value, verification_token, verification_status, created_by")
       .eq("id", req.params.id)
       .maybeSingle();
 
@@ -242,10 +242,18 @@ assetsRouter.post(
       );
     }
 
-    const { data: updated, error: updateError } = await supabase
+    // Con service_role porque la migración 023 impide escribir estas columnas
+    // con el JWT del usuario. La regla de `assets_modify` ya no aplica sola a
+    // este cliente, así que se repite acá.
+    if (profile.role !== "ciso" && asset.created_by !== profile.id) {
+      throw new AppError(400, "ASSET_VERIFY_FAILED", "Solo quien creó el activo o un ciso puede verificarlo");
+    }
+
+    const { data: updated, error: updateError } = await supabaseAdmin
       .from("assets")
       .update({ verification_status: "verified", verified_at: new Date().toISOString() })
       .eq("id", asset.id)
+      .eq("organization_id", profile.organizationId)
       .select("id, type, value, verification_status, verified_at")
       .single();
 

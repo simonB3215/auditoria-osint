@@ -2,7 +2,7 @@ import { Router } from "express";
 import { authenticateToken, requireRole } from "../middlewares/auth.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../middlewares/errorHandler.js";
-import { supabaseForUser } from "../config/supabase.js";
+import { supabaseAdmin, supabaseForUser } from "../config/supabase.js";
 import { scanQueue, countActiveOrgScans, type ScanTargetAsset } from "../jobs/scanQueue.js";
 import { AUDIT_ACTIONS, logAuditEvent, requestContext } from "../services/auditLogger.js";
 import { env } from "../config/env.js";
@@ -67,7 +67,9 @@ sandboxRouter.post(
       return;
     }
 
-    const { data: asset, error: assetError } = await supabase
+    // Con service_role porque la migración 023 impide crear un activo ya
+    // verificado con el JWT del usuario. El valor es fijo, no viene del request.
+    const { data: asset, error: assetError } = await supabaseAdmin
       .from("assets")
       .insert({
         type: "ip",
