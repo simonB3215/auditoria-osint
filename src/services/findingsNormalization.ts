@@ -306,3 +306,88 @@ export function buildCtFindings(
   }
   return findings;
 }
+
+export interface ArchivedUrl {
+  /** Host y ruta, sin query. */
+  url: string;
+  pattern: string;
+  kind: "sensitive_file" | "access_panel";
+}
+
+const ARCHIVED_PATH_PATTERNS: Array<{ pattern: string; kind: ArchivedUrl["kind"]; regex: RegExp }> = [
+  { pattern: ".env", kind: "sensitive_file", regex: /(^|\/)\.env(\.[^/]*)?$/ },
+  { pattern: ".git", kind: "sensitive_file", regex: /(^|\/)\.git(\/|$)/ },
+  { pattern: "wp-config", kind: "sensitive_file", regex: /(^|\/)wp-config(\.[^/]*)?$/ },
+  { pattern: ".sql", kind: "sensitive_file", regex: /\.sql(\.(gz|zip|bak))?$/ },
+  { pattern: ".bak", kind: "sensitive_file", regex: /\.bak$/ },
+  { pattern: ".zip", kind: "sensitive_file", regex: /\.zip$/ },
+  { pattern: "backup", kind: "sensitive_file", regex: /(^|[/._-])backups?([/._-]|$)/ },
+  { pattern: "admin", kind: "access_panel", regex: /(^|\/)(wp-)?admin(istrator)?(\/|\.[^/]*)?$/ },
+  { pattern: "login", kind: "access_panel", regex: /(^|\/)(wp-)?login(\/|\.[^/]*)?$/ },
+];
+
+/** Compara solo la ruta, para que un dominio como `admin.empresa.cl` no marque todas sus URLs. */
+export function classifyArchivedPath(pathname: string): Pick<ArchivedUrl, "pattern" | "kind"> | null {
+  const path = pathname.toLowerCase();
+  const match = ARCHIVED_PATH_PATTERNS.find(({ regex }) => regex.test(path));
+  return match ? { pattern: match.pattern, kind: match.kind } : null;
+}
+
+const MAX_ARCHIVED_EXAMPLES = 20;
+const MAX_ARCHIVED_URL_LENGTH = 120;
+
+function truncateUrl(url: string): string {
+  return url.length > MAX_ARCHIVED_URL_LENGTH ? `${url.slice(0, MAX_ARCHIVED_URL_LENGTH)}…` : url;
+}
+
+/** Que una URL esté archivada no prueba que siga expuesta, y el texto lo deja claro. */
+export function buildArchiveFindings(
+  auditId: string,
+  assetId: string,
+  domain: string,
+  urls: ArchivedUrl[]
+): { findings: NormalizedFinding[]; summary: Record<string, unknown> } {
+  const base = { audit_id: auditId, asset_id: assetId, source_engine: "osint-archive" };
+  const listOf = (kind: ArchivedUrl["kind"]) => {
+    const matching = urls.filter((archived) => archived.kind === kind).map((archived) => truncateUrl(archived.url));
+    const shown = matching.slice(0, MAX_ARCHIVED_EXAMPLES).join(", ");
+    return {
+      count: matching.length,
+      shown: matching.length > MAX_ARCHIVED_EXAMPLES ? `${shown} y ${matching.length - MAX_ARCHIVED_EXAMPLES} más` : shown,
+    };
+  };
+
+  const findings: NormalizedFinding[] = [];
+  const files = listOf("sensitive_file");
+  if (files.count > 0) {
+    findings.push({
+      ...base,
+      title: "Archivos sensibles en el archivo web",
+      severity: "medium",
+      detail: `${files.count} URL(s) de ${domain} con nombre de configuración, base de datos o respaldo quedaron archivadas públicamente. No prueba que sigan expuestas: ${files.shown}.`,
+      remediation: "Confirmar que ya no respondan, cambiar cualquier credencial que hayan contenido y pedir su retiro del archivo si corresponde.",
+    });
+  }
+  const panels = listOf("access_panel");
+  if (panels.count > 0) {
+    findings.push({
+      ...base,
+      title: "Paneles de acceso en el archivo web",
+      severity: "low",
+      detail: `${panels.count} URL(s) de paneles de acceso de ${domain} quedaron archivadas públicamente: ${panels.shown}.`,
+      remediation: "Confirmar si siguen en uso y restringir su acceso a redes o usuarios autorizados.",
+    });
+  }
+
+  const byPattern: Record<string, number> = {};
+  for (const archived of urls) byPattern[archived.pattern] = (byPattern[archived.pattern] ?? 0) + 1;
+
+  return {
+    findings,
+    summary: {
+      total: urls.length,
+      byPattern,
+      examples: urls.slice(0, MAX_ARCHIVED_EXAMPLES).map((archived) => truncateUrl(archived.url)),
+    },
+  };
+}

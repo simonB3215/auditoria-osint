@@ -13,8 +13,15 @@ import {
 } from "./helpers/tenants.js";
 import { supabaseAdmin } from "../src/config/supabase.js";
 import { processOsintJob } from "../src/jobs/osintProcessor.js";
-import { buildCtFindings, buildEmailDnsFindings, type EmailDnsPosture } from "../src/services/findingsNormalization.js";
+import {
+  buildArchiveFindings,
+  buildCtFindings,
+  buildEmailDnsFindings,
+  classifyArchivedPath,
+  type EmailDnsPosture,
+} from "../src/services/findingsNormalization.js";
 import { parseCrtShHosts } from "../src/services/osint/ctLogs.js";
+import { parseCdxUrls } from "../src/services/osint/wayback.js";
 import { isPublicIp } from "../src/services/osint/subdomainResolve.js";
 
 const found = (...records: string[]) => ({ status: "found" as const, records });
@@ -40,6 +47,10 @@ describe("Módulo C (C1): certificados y DNS de correo", () => {
   let crt: Server;
   let crtHits: Record<string, number>;
   let crtResponses: Map<string, string>;
+  let cdxHits: Record<string, number>;
+  const cdxResponses = new Map<string, string>();
+  const cdxFailures = new Set<string>();
+  const visitedPaths: string[] = [];
   let orgId: string;
   let otherOrgId: string;
   let ciso: TestUser;
@@ -124,7 +135,18 @@ describe("Módulo C (C1): certificados y DNS de correo", () => {
 
     crtResponses = new Map();
     crt = createServer((req, res) => {
-      const query = new URL(req.url ?? "", "http://x").searchParams.get("q") ?? "";
+      const parsed = new URL(req.url ?? "", "http://x");
+      if (parsed.pathname === "/cdx/search/cdx") {
+        const target = parsed.searchParams.get("url") ?? "";
+        cdxHits[target] = (cdxHits[target] ?? 0) + 1;
+        if (cdxFailures.has(target)) res.statusCode = 503;
+        res.setHeader("Content-Type", "application/json");
+        res.end(cdxResponses.get(target) ?? "[]");
+        return;
+      }
+      // Cualquier otra ruta sería visitar una URL del cliente: ver TC-OSINT-22.
+      if (parsed.pathname !== "/") visitedPaths.push(parsed.pathname);
+      const query = parsed.searchParams.get("q") ?? "";
       const domain = query.replace(/^%\./, "");
       crtHits[domain] = (crtHits[domain] ?? 0) + 1;
       res.setHeader("Content-Type", "application/json");
@@ -132,6 +154,7 @@ describe("Módulo C (C1): certificados y DNS de correo", () => {
     });
     await new Promise<void>((resolve) => crt.listen(0, "127.0.0.1", resolve));
     process.env.OSINT_CRTSH_BASE_URL = `http://127.0.0.1:${(crt.address() as AddressInfo).port}`;
+    process.env.OSINT_WAYBACK_BASE_URL = process.env.OSINT_CRTSH_BASE_URL;
 
     orgId = await createOrganization("QA Org - Fuentes OSINT");
     otherOrgId = await createOrganization("QA Org B - Fuentes OSINT");
@@ -142,11 +165,13 @@ describe("Módulo C (C1): certificados y DNS de correo", () => {
 
   beforeEach(() => {
     crtHits = {};
+    cdxHits = {};
   });
 
   afterAll(async () => {
     delete process.env.DNS_RESOLVER_SERVER;
     delete process.env.OSINT_CRTSH_BASE_URL;
+    delete process.env.OSINT_WAYBACK_BASE_URL;
     dns.close();
     await new Promise((resolve) => crt.close(resolve));
     await Promise.all([ciso, viewer, otherCiso].map(destroyTestUser));
@@ -378,5 +403,133 @@ describe("Módulo C (C1): certificados y DNS de correo", () => {
     expect(nextRows).toEqual([{ hostname: `dos.${domain}`, status: "dismissed" }]);
     expect(next.summary.domains[domain].ct.unregistered).toBe(0);
     expect(next.findings).toEqual([]);
+  }, 30000);
+
+  test("TC-OSINT-21: clasifica URLs históricas por su ruta", () => {
+    const patternOf = (path: string) => classifyArchivedPath(path)?.pattern ?? null;
+    expect(patternOf("/.env")).toBe(".env");
+    expect(patternOf("/app/.env.production")).toBe(".env");
+    expect(patternOf("/.git/config")).toBe(".git");
+    expect(patternOf("/wp-config.php")).toBe("wp-config");
+    expect(patternOf("/dump.SQL")).toBe(".sql");
+    expect(patternOf("/db.sql.gz")).toBe(".sql");
+    expect(patternOf("/site.bak")).toBe(".bak");
+    expect(patternOf("/files/site.zip")).toBe(".zip");
+    expect(patternOf("/backup/2024/index.html")).toBe("backup");
+    expect(patternOf("/admin/")).toBe("admin");
+    expect(patternOf("/wp-login.php")).toBe("login");
+
+    // Parecidos que no son sensibles.
+    for (const path of ["/", "/environment", "/github", "/administracion-publica", "/blog/login-seguro", "/sqlite-tutorial"]) {
+      expect(patternOf(path)).toBeNull();
+    }
+
+    const body = JSON.stringify([
+      ["original", "timestamp", "statuscode"],
+      ["https://empresa.cl/.env?token=SECRETO", "20200101000000", "200"],
+      ["https://empresa.cl/.env?otra=cosa", "20210101000000", "200"],
+      ["http://app.empresa.cl:80/wp-login.php", "20200101000000", "-"],
+      ["https://empresa.cl/dump.sql", "20200101000000", "404"],
+      ["https://empresa.cl/index.html", "20200101000000", "200"],
+      ["https://empresa.cl.evil.com/.env", "20200101000000", "200"],
+      ["no es una url", "20200101000000", "200"],
+    ]);
+    const urls = parseCdxUrls(body, "empresa.cl");
+    expect(urls).toEqual([
+      { url: "app.empresa.cl/wp-login.php", pattern: "login", kind: "access_panel" },
+      { url: "empresa.cl/.env", pattern: ".env", kind: "sensitive_file" },
+    ]);
+    expect(JSON.stringify(urls)).not.toContain("SECRETO");
+    expect(parseCdxUrls("[]", "empresa.cl")).toEqual([]);
+    expect(() => parseCdxUrls("<html>caído</html>", "empresa.cl")).toThrow();
+
+    const { findings, summary } = buildArchiveFindings("a", "b", "empresa.cl", urls);
+    expect(findings.map(({ title, severity, source_engine }) => [source_engine, title, severity])).toEqual([
+      ["osint-archive", "Archivos sensibles en el archivo web", "medium"],
+      ["osint-archive", "Paneles de acceso en el archivo web", "low"],
+    ]);
+    expect(summary).toMatchObject({ total: 2, byPattern: { ".env": 1, login: 1 } });
+    expect(buildArchiveFindings("a", "b", "empresa.cl", []).findings).toEqual([]);
+  });
+
+  test("TC-OSINT-22: consulta el índice, usa caché y nunca visita las URLs del cliente", async () => {
+    const domain = uniqueDomain();
+    const assetId = await insertDomain(domain);
+    configureSecureDomain(domain);
+    cdxResponses.set(
+      domain,
+      JSON.stringify([
+        ["original", "timestamp", "statuscode"],
+        [`https://${domain}/.env?token=SECRETO`, "20200101000000", "200"],
+        [`https://${domain}/admin/`, "20200101000000", "200"],
+        // Apunta al propio servidor de prueba: si se visitara, quedaría registrado.
+        [`${process.env.OSINT_WAYBACK_BASE_URL}/.git/config`, "20200101000000", "200"],
+      ])
+    );
+
+    const first = await run(assetId, domain);
+    expect(first.status).toBe("completed");
+    expect(first.sources.wayback).toMatchObject({ status: "ok", cached: false });
+    expect(first.findings.map((finding) => [finding.source_engine, finding.title, finding.severity]).sort()).toEqual([
+      ["osint-archive", "Archivos sensibles en el archivo web", "medium"],
+      ["osint-archive", "Paneles de acceso en el archivo web", "low"],
+    ]);
+    expect(first.summary.domains[domain].wayback).toMatchObject({ total: 2, byPattern: { ".env": 1, admin: 1 } });
+    expect(cdxHits[domain]).toBe(1);
+    expect(visitedPaths).toEqual([]);
+
+    const { data: stored } = await supabaseAdmin.from("findings").select("detail").eq("audit_id", first.auditId);
+    const { data: cache } = await supabaseAdmin
+      .from("osint_source_cache")
+      .select("payload")
+      .eq("organization_id", orgId)
+      .eq("source", "wayback")
+      .eq("query_key", domain);
+    expect(cache).toHaveLength(1);
+    expect(JSON.stringify([stored, cache, first.summary])).not.toContain("SECRETO");
+
+    const second = await run(assetId, domain, first.auditId);
+    expect(second.sources.wayback.cached).toBe(true);
+    expect(cdxHits[domain]).toBe(1);
+    expect(second.findings).toHaveLength(2);
+    expect(visitedPaths).toEqual([]);
+  }, 30000);
+
+  test("TC-OSINT-23: con el archivo web caído termina parcial, sin guardar nada en caché", async () => {
+    const domain = uniqueDomain();
+    const assetId = await insertDomain(domain);
+    configureSecureDomain(domain);
+    cdxFailures.add(domain);
+
+    const result = await run(assetId, domain);
+    expect(result.status).toBe("partial");
+    expect(result.sources.wayback.status).toBe("failed");
+    expect(result.sources.email_dns.status).toBe("ok");
+    expect(cdxHits[domain]).toBe(2);
+
+    const { count } = await supabaseAdmin
+      .from("osint_source_cache")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", orgId)
+      .eq("source", "wayback")
+      .eq("query_key", domain);
+    expect(count).toBe(0);
+  }, 30000);
+
+  test("TC-OSINT-24: las rutas no sensibles no generan hallazgos", async () => {
+    const domain = uniqueDomain();
+    const assetId = await insertDomain(domain);
+    configureSecureDomain(domain);
+    cdxResponses.set(
+      domain,
+      JSON.stringify([
+        ["original", "timestamp", "statuscode"],
+        [`https://${domain}/index.html`, "20200101000000", "200"],
+      ])
+    );
+
+    const result = await run(assetId, domain);
+    expect(result.sources.wayback.status).toBe("no_data");
+    expect(result.findings).toEqual([]);
   }, 30000);
 });

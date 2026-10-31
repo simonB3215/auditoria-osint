@@ -75,6 +75,7 @@ const envSchema = z.object({
   OSINT_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
   OSINT_CACHE_TTL_HOURS: z.coerce.number().int().positive().default(24),
   OSINT_MAX_SUBDOMAINS: z.coerce.number().int().positive().default(200),
+  OSINT_WAYBACK_LIMIT: z.coerce.number().int().positive().default(5000),
   MAX_CONCURRENT_OSINT_RUNS_PER_ORG: z.coerce.number().int().positive().default(1),
   OSINT_CRTSH_BASE_URL: z.string().url().default("https://crt.sh"),
   OSINT_WAYBACK_BASE_URL: z.string().url().default("https://web.archive.org"),
