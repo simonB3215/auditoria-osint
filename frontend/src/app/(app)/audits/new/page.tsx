@@ -155,6 +155,7 @@ export default function NewAuditPage() {
               {submitting ? t.submitting : t.submit}
             </Button>
           </form>
+          <p className="mt-4 text-xs text-muted-foreground">{t.osintNote}</p>
         </CardContent>
       </Card>
     </div>

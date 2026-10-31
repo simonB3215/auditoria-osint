@@ -17,6 +17,7 @@ import {
   type ReportEvidenceLedgerEntry,
 } from "../services/pdfReport.js";
 import type { FindingSeverity } from "../services/findingsNormalization.js";
+import { buildOsintReportLines, loadOsintReport } from "../services/osintReport.js";
 import { logAuditEvent, requestContext, AUDIT_ACTIONS } from "../services/auditLogger.js";
 
 // a.md, "MVP: REGLAS DE NEGOCIO...": las URLs firmadas de descarga
@@ -56,7 +57,7 @@ reportsRouter.get(
     ] = await Promise.all([
       supabase
         .from("findings")
-        .select("title, severity, status, detail, remediation, justification_notes, reviewed_by")
+        .select("source_engine, title, severity, status, detail, remediation, justification_notes, reviewed_by")
         .eq("audit_id", auditId),
       supabase
         .from("audit_evidences")
@@ -83,22 +84,31 @@ reportsRouter.get(
     // representa un riesgo real: no debe penalizar el puntaje, aunque sigue
     // apareciendo en el reporte para dejar constancia de la decisión.
     const severityCounts: Record<FindingSeverity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+    const osintSeverityCounts: Record<FindingSeverity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
     for (const finding of findings ?? []) {
       if (finding.status === "false_positive" || finding.status === "accepted_risk") continue;
-      severityCounts[finding.severity as FindingSeverity] += 1;
+      const counts = finding.source_engine.startsWith("osint-") ? osintSeverityCounts : severityCounts;
+      counts[finding.severity as FindingSeverity] += 1;
     }
 
     const riskScore = calculateRiskScore({
       findingsBySeverity: severityCounts,
       completionPercentage: coverage.completion_percentage,
+      osintFindingsBySeverity: osintSeverityCounts,
     });
 
     // Falsos positivos / riesgos aceptados van a su propia sección del PDF
     // (a.md, "Sección de Falsos Positivos y Excepciones") en vez de
     // mezclarse con el desglose de hallazgos activos de arriba.
-    const activeFindings = (findings ?? []).filter(
+    const allActiveFindings = (findings ?? []).filter(
       (f) => f.status !== "false_positive" && f.status !== "accepted_risk"
     );
+    // OSINT tiene su propia sección: en el desglose general se duplicaría.
+    const activeFindings = allActiveFindings.filter((f) => !f.source_engine.startsWith("osint-"));
+    const osintFindings = allActiveFindings.filter((f) => f.source_engine.startsWith("osint-"));
+    const osintReport = await loadOsintReport(supabase, auditId, audit.framework).catch((err: Error) => {
+      throw new AppError(400, "OSINT_REPORT_FETCH_FAILED", err.message);
+    });
     const ignoredFindingsRaw = (findings ?? []).filter(
       (f) => f.status === "false_positive" || f.status === "accepted_risk"
     );
@@ -134,6 +144,7 @@ reportsRouter.get(
               sePercentage: anci.sePercentage,
               oivPercentage: anci.oivPercentage,
               findings: (findings ?? []).map((f) => ({ title: f.title, severity: f.severity, status: f.status })),
+              osint: osintReport,
               generatedAt: generatedAt.toISOString(),
             })
           )
@@ -149,6 +160,9 @@ reportsRouter.get(
       findings: activeFindings as ReportFinding[],
       ignoredFindings,
       invalidEvidences: (evidences ?? []) as ReportEvidenceIssue[],
+      osintLines: osintReport
+        ? buildOsintReportLines(osintReport, osintFindings as ReportFinding[], riskScore.osintPenalty)
+        : undefined,
       anci: isAnciFramework
         ? {
             sePercentage: anci.sePercentage,
@@ -221,6 +235,7 @@ reportsRouter.get(
           complianceLevel: riskScore.complianceLevel,
           findingsPenalty: riskScore.findingsPenalty,
           coveragePenalty: riskScore.coveragePenalty,
+          osintPenalty: riskScore.osintPenalty,
         },
         coverage,
       },

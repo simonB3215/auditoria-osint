@@ -3,6 +3,7 @@ import type { RiskScoreResult } from "./riskScoring.js";
 import type { CoverageResult } from "./coverageEngine.js";
 import type { FindingSeverity } from "./findingsNormalization.js";
 import type { TechnicalControlResult } from "./anciCoverageEngine.js";
+import type { OsintReportLine } from "./osintReport.js";
 
 export interface ReportFinding {
   title: string;
@@ -49,6 +50,8 @@ export interface BuildReportInput {
   findings: ReportFinding[];
   ignoredFindings: ReportIgnoredFinding[];
   invalidEvidences: ReportEvidenceIssue[];
+  /** Solo si hubo una corrida OSINT terminada. */
+  osintLines?: OsintReportLine[];
   anci?: ReportAnciSection;
 }
 
@@ -83,7 +86,7 @@ export async function buildAuditReportPdf(input: BuildReportInput): Promise<Buff
   doc.text(`Nivel de Cumplimiento: ${input.riskScore.complianceLevel.toUpperCase()}`);
   doc.text(`Cobertura documental: ${input.coverage.completion_percentage}%`);
   doc.text(
-    `(Penalización por hallazgos: -${input.riskScore.findingsPenalty} | Penalización por cobertura incompleta: -${input.riskScore.coveragePenalty})`
+    `(Penalización por hallazgos: -${input.riskScore.findingsPenalty} | Penalización por cobertura incompleta: -${input.riskScore.coveragePenalty}${input.riskScore.osintPenalty > 0 ? ` | Penalización por reconocimiento pasivo: -${input.riskScore.osintPenalty}` : ""})`
   );
   doc.moveDown();
 
@@ -133,6 +136,25 @@ export async function buildAuditReportPdf(input: BuildReportInput): Promise<Buff
       }
       doc.moveDown(0.5);
     }
+  }
+
+  // --- Reconocimiento pasivo (Módulo C) ---
+  if (input.osintLines) {
+    doc.fontSize(16).text("Reconocimiento pasivo (OSINT)", { underline: true });
+    doc.moveDown(0.5);
+    for (const line of input.osintLines) {
+      if (line.style === "heading") {
+        doc.moveDown(0.4);
+        doc.fontSize(13).text(line.text, { underline: true });
+      } else if (line.style === "bullet") {
+        doc.fontSize(11).text(`  • ${line.text}`);
+      } else if (line.style === "small") {
+        doc.fontSize(10).text(`    ${line.text}`);
+      } else {
+        doc.fontSize(11).text(line.text);
+      }
+    }
+    doc.moveDown();
   }
 
   // --- Falsos Positivos y Excepciones Aplicadas (a.md, "MODULO DE

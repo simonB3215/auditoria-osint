@@ -11,6 +11,7 @@ import { env } from "../config/env.js";
 import { countActiveOrgOsintRuns, osintQueue } from "../jobs/osintQueue.js";
 import { AUDIT_ACTIONS, logAuditEvent, requestContext } from "../services/auditLogger.js";
 import { attachParents, TARGET_ASSET_SELECT, type TargetAssetRow } from "../services/assetParents.js";
+import { loadOsintReport } from "../services/osintReport.js";
 
 export const osintRouter = Router();
 
@@ -179,7 +180,11 @@ osintRouter.get(
     const supabase = supabaseForUser(req.profile!.accessToken);
     const auditId = req.params.auditId as string;
 
-    const { data: audit, error: auditError } = await supabase.from("audits").select("id").eq("id", auditId).maybeSingle();
+    const { data: audit, error: auditError } = await supabase
+      .from("audits")
+      .select("id, framework")
+      .eq("id", auditId)
+      .maybeSingle();
     if (auditError) throw new AppError(400, "AUDIT_FETCH_FAILED", auditError.message);
     if (!audit) throw new AppError(404, "AUDIT_NOT_FOUND", "Auditoría no encontrada");
 
@@ -191,7 +196,11 @@ osintRouter.get(
       .limit(10);
     if (error) throw new AppError(400, "OSINT_RUNS_FETCH_FAILED", error.message);
 
-    res.status(200).json({ data: { latest: runs?.[0] ?? null, history: runs ?? [] } });
+    const report = await loadOsintReport(supabase, auditId, audit.framework).catch((err: Error) => {
+      throw new AppError(400, "OSINT_REPORT_FETCH_FAILED", err.message);
+    });
+
+    res.status(200).json({ data: { latest: runs?.[0] ?? null, history: runs ?? [], report } });
   })
 );
 

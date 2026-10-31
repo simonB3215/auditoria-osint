@@ -26,6 +26,7 @@ import {
 import { AuditStatusBadge } from "@/components/audit-status-badge";
 import { CoverageMatrix } from "@/components/coverage-matrix";
 import { EvidenceUpload } from "@/components/evidence-upload";
+import { OsintModuleCard } from "@/components/osint-module-card";
 
 export default function AuditDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = usePromise(params);
@@ -220,6 +221,8 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
         </Card>
         <p className="text-xs text-muted-foreground">{t.networkModuleLegend}</p>
       </div>
+
+      <OsintModuleCard auditId={id} canWrite={canWrite} />
 
       <div className="flex flex-col gap-2">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t.filesModuleEyebrow}</p>

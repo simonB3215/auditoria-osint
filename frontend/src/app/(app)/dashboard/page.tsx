@@ -459,6 +459,11 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <SeverityDistribution counts={summary.findingsBySeverity} />
+            {summary.osintFindingsCount > 0 && (
+              <p className="mt-3 text-xs text-muted-foreground">
+                {t.osintFindingsNote.replace("{count}", String(summary.osintFindingsCount))}
+              </p>
+            )}
           </CardContent>
         </Card>
 

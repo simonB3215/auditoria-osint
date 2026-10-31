@@ -35,7 +35,7 @@ dashboardRouter.get(
         .from("audits")
         .select("id, title, framework, status, risk_score, created_at")
         .order("created_at", { ascending: false }),
-      supabase.from("findings").select("severity, status"),
+      supabase.from("findings").select("severity, status, source_engine"),
     ]);
 
     if (assetsCountRes.error) throw new AppError(400, "ASSETS_COUNT_FAILED", assetsCountRes.error.message);
@@ -44,7 +44,12 @@ dashboardRouter.get(
     if (findingsRes.error) throw new AppError(400, "FINDINGS_FETCH_FAILED", findingsRes.error.message);
 
     const audits = auditsRes.data ?? [];
-    const findings = findingsRes.data ?? [];
+    // OSINT va aparte: son señales indirectas y no deben mover el banner de
+    // críticos ni la distribución técnica del Módulo A.
+    const findings = (findingsRes.data ?? []).filter((f) => !f.source_engine.startsWith("osint-"));
+    const osintFindingsCount = (findingsRes.data ?? []).filter(
+      (f) => f.source_engine.startsWith("osint-") && !IGNORED_FINDING_STATUSES.includes(f.status)
+    ).length;
 
     const auditsByStatus = Object.fromEntries(AUDIT_STATUSES.map((s) => [s, 0])) as Record<
       (typeof AUDIT_STATUSES)[number],
@@ -112,6 +117,7 @@ dashboardRouter.get(
         auditsByStatus,
         findingsBySeverity,
         ignoredFindingsCount,
+        osintFindingsCount,
         averageCoveragePercentage,
         securityHealthScore,
         anciCompliance,

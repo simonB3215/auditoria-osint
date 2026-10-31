@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { SeverityBadge } from "@/components/severity-badge";
 import { FindingStatusBadge } from "@/components/finding-status-badge";
+import { OsintReportCard } from "@/components/osint-report-card";
 
 interface PendingStatusChange {
   findingId: string;
@@ -331,7 +332,14 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
                     <TableCell>
                       <SeverityBadge severity={finding.severity} />
                     </TableCell>
-                    <TableCell className="font-medium">{finding.title}</TableCell>
+                    <TableCell className="font-medium">
+                      {finding.title}
+                      {finding.source_engine.startsWith("osint-") && (
+                        <Badge variant="outline" className="ml-2 text-[10px]">
+                          {dict.osint.badge}
+                        </Badge>
+                      )}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">{finding.remediation ?? "—"}</TableCell>
                     <TableCell>
                       <FindingStatusBadge status={finding.status} />
@@ -381,6 +389,8 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
           )}
         </CardContent>
       </Card>
+
+      <OsintReportCard auditId={id} canReview={canReview} />
 
       <Dialog open={pendingChange !== null} onOpenChange={(open) => !open && setPendingChange(null)}>
         <DialogContent>

@@ -1401,6 +1401,20 @@ de terceros sin autorización.
   `MAX_ASSETS_PER_SCAN` activos: por encima, valen los elegidos al crear la
   auditoría.
 
+### Módulo C: reconocimiento pasivo (OSINT)
+- **Qué hace**: consulta fuentes públicas sobre dominios verificados: crt.sh,
+  DNS de correo (SPF, DMARC, DKIM, MX), el índice de archive.org y, si se conecta,
+  Have I Been Pwned. No envía tráfico de escaneo al cliente ni visita sus URLs, y
+  los subdominios encontrados solo se sugieren. Corre en `npm run worker:osint`.
+- **Puntaje**: los hallazgos `osint-*` nunca son `critical`, pesan 4/2/1 y restan
+  como máximo 15 puntos. Sin ellos, el puntaje es igual al de antes. No entran a la
+  distribución del dashboard ni al banner de críticos.
+- **Controles**: ANCI, ISO 27001 y NIST CSF solo reciben anotaciones. Ningún
+  estado ni porcentaje cambia. SPF, DMARC y DKIM no tienen control asociado.
+- **Datos de brechas**: las cuentas se guardan enmascaradas, solo las ven `ciso` y
+  `auditor`, y no aparecen en el PDF, que trae conteos y nombres de brechas. Se
+  borran según la política de retención, con un tope de 365 días.
+
 ### Compliance, trazabilidad y retención (GDPR / ISO 27001)
 - **Audit logs inmutables**: `audit_logs` registra automáticamente carga de
   evidencias, cambios de estado de hallazgos, generación/descarga de

@@ -124,6 +124,7 @@ export interface RiskScore {
   complianceLevel: "alto" | "medio" | "bajo" | "crítico";
   findingsPenalty: number;
   coveragePenalty: number;
+  osintPenalty: number;
 }
 
 export interface AuditReport {
@@ -142,6 +143,7 @@ export interface DashboardSummary {
   auditsByStatus: Record<AuditStatus, number>;
   findingsBySeverity: Record<FindingSeverity, number>;
   ignoredFindingsCount: number;
+  osintFindingsCount: number;
   averageCoveragePercentage: number | null;
   securityHealthScore: number | null;
   anciCompliance: { sePercentage: number; oivPercentage: number } | null;
@@ -445,4 +447,40 @@ export interface DomainReview {
   declaration_version: string;
   signature_status: string;
   powers_status: string;
+}
+
+export type OsintRunStatus = "queued" | "running" | "completed" | "partial" | "failed";
+export type OsintSourceOutcome = "ok" | "partial" | "failed" | "not_configured" | "no_data";
+
+export interface OsintRun {
+  id: string;
+  status: OsintRunStatus;
+  domains: string[];
+  source_status: Record<string, Record<string, { status: OsintSourceOutcome; detail: string | null }>>;
+  created_at: string;
+  finished_at: string | null;
+}
+
+export interface OsintReportData {
+  summaries: Record<
+    string,
+    { email_dns?: { spf: string | null; dmarcPolicy: string | null; dkimSelectors: string[]; mx: string[] } }
+  >;
+  sourceStatus: Record<string, Record<string, { status: OsintSourceOutcome }>>;
+  signals: Array<{ code: string; text: string }>;
+}
+
+export interface DiscoveredSubdomain {
+  id: string;
+  hostname: string;
+  resolved_ips: string[];
+  behind_cdn: boolean;
+  status: "new" | "dismissed";
+  registered: boolean;
+}
+
+export interface OsintBreachSummary {
+  accounts: number;
+  breaches: string[];
+  exposures: Array<{ alias_masked: string; breaches: string[] }>;
 }
