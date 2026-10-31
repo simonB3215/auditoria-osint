@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { authenticateToken, requireRole } from "../middlewares/auth.js";
 import { sensitiveActionRateLimiter } from "../middlewares/security.js";
@@ -9,6 +10,37 @@ import { scanQueue, countActiveOrgScans, type ScanTargetAsset } from "../jobs/sc
 import { validateUuidParams } from "../middlewares/validateParams.js";
 import { AUDIT_ACTIONS, logAuditEvent, requestContext } from "../services/auditLogger.js";
 import { env } from "../config/env.js";
+
+const SCAN_ASSET_SELECT = "id, type, value, verification_status, parent_asset_id";
+
+interface ScanAssetRow {
+  id: string;
+  type: string;
+  value: string;
+  verification_status: string;
+  parent_asset_id: string | null;
+  parent?: { value: string; verification_status: string };
+}
+
+/**
+ * Trae aparte el dominio padre de cada subdominio: PostgREST no detecta la
+ * relación del activo consigo mismo por la FK compuesta de la migración 024.
+ * Un padre que no vuelve se trata como no verificado.
+ */
+async function attachParents(supabase: SupabaseClient, assets: ScanAssetRow[]): Promise<ScanAssetRow[]> {
+  const parentIds = [...new Set(assets.flatMap((a) => (a.parent_asset_id ? [a.parent_asset_id] : [])))];
+  if (parentIds.length === 0) return assets;
+
+  const { data, error } = await supabase.from("assets").select("id, value, verification_status").in("id", parentIds);
+  if (error) throw new AppError(400, "ASSETS_FETCH_FAILED", error.message);
+
+  const parents = new Map((data ?? []).map((parent) => [parent.id, parent]));
+  return assets.map((a) =>
+    a.parent_asset_id
+      ? { ...a, parent: parents.get(a.parent_asset_id) ?? { value: "", verification_status: "pending" } }
+      : a
+  );
+}
 
 export const scansRouter = Router();
 
@@ -44,7 +76,7 @@ scansRouter.post(
       throw new AppError(409, "SCAN_ALREADY_IN_PROGRESS", "Ya hay un escaneo en curso para esta auditoría");
     }
 
-    let assets: Array<{ id: string; type: string; value: string; verification_status: string }> = [];
+    let assets: ScanAssetRow[] = [];
 
     if (body.asset_ids && body.asset_ids.length > 0) {
       // Security gate explícito (a.md, sección "Security Gate"): si el
@@ -63,14 +95,15 @@ scansRouter.post(
       // aborta TODA la solicitud con 403 y se audita el intento.
       const { data: requested, error: requestedError } = await supabase
         .from("assets")
-        .select("id, type, value, verification_status")
+        .select(SCAN_ASSET_SELECT)
         .in("id", body.asset_ids);
       if (requestedError) {
         throw new AppError(400, "ASSETS_FETCH_FAILED", requestedError.message);
       }
-      const returnedIds = new Set((requested ?? []).map((a) => a.id));
+      const requestedAssets = (requested ?? []) as ScanAssetRow[];
+      const returnedIds = new Set(requestedAssets.map((a) => a.id));
       const notOwnedIds = body.asset_ids.filter((id) => !returnedIds.has(id));
-      const unverified = (requested ?? []).filter((a) => a.verification_status !== "verified");
+      const unverified = requestedAssets.filter((a) => a.verification_status !== "verified");
       if (unverified.length > 0 || notOwnedIds.length > 0) {
         await logAuditEvent({
           organizationId: audit.organization_id,
@@ -97,16 +130,69 @@ scansRouter.post(
           `No se puede ejecutar el escaneo: ${unverified.length} activo(s) seleccionado(s) no tiene(n) su propiedad verificada. Verificá el dominio con POST /assets/:id/verify antes de reintentar.`
         );
       }
-      assets = requested ?? [];
+      assets = requestedAssets;
     } else {
       const { data, error: assetsError } = await supabase
         .from("assets")
-        .select("id, type, value, verification_status")
+        .select(SCAN_ASSET_SELECT)
         .eq("verification_status", "verified");
       if (assetsError) {
         throw new AppError(400, "ASSETS_FETCH_FAILED", assetsError.message);
       }
-      assets = data ?? [];
+      assets = (data ?? []) as ScanAssetRow[];
+
+      // Con más activos que el tope de un escaneo, valen los elegidos al crear
+      // la auditoría. Por debajo del tope el comportamiento no cambia.
+      if (assets.length > env.MAX_ASSETS_PER_SCAN) {
+        const { data: linked, error: linkedError } = await supabase
+          .from("audit_assets")
+          .select("asset_id")
+          .eq("audit_id", auditId);
+        if (linkedError) {
+          throw new AppError(400, "ASSETS_FETCH_FAILED", linkedError.message);
+        }
+        const linkedIds = new Set((linked ?? []).map((link) => link.asset_id));
+        if (linkedIds.size > 0) assets = assets.filter((a) => linkedIds.has(a.id));
+      }
+    }
+
+    assets = await attachParents(supabase, assets);
+
+    // El subdominio se autorizó por su padre: si el padre perdió la
+    // verificación, esa autorización ya no vale.
+    const orphaned = assets.filter((a) => a.parent && a.parent.verification_status !== "verified");
+    if (orphaned.length > 0) {
+      await logAuditEvent({
+        organizationId: audit.organization_id,
+        actorId: profile.id,
+        action: AUDIT_ACTIONS.UNAUTHORIZED_SCAN_BLOCKED,
+        resourceType: "scan",
+        resourceId: auditId,
+        payloadAfter: { subdomainsWithoutVerifiedParent: orphaned.map((a) => ({ id: a.id, value: a.value })) },
+        ...requestContext(req),
+      });
+      throw new AppError(
+        403,
+        "UNAUTHORIZED_SCAN_TARGET",
+        `No se puede ejecutar el escaneo: ${orphaned.length} subdominio(s) tiene(n) un dominio padre sin verificar.`
+      );
+    }
+
+    if (assets.length > env.MAX_ASSETS_PER_SCAN) {
+      await logAuditEvent({
+        organizationId: audit.organization_id,
+        actorId: profile.id,
+        action: AUDIT_ACTIONS.SCAN_ASSET_LIMIT_EXCEEDED,
+        resourceType: "scan",
+        resourceId: auditId,
+        payloadAfter: { requested: assets.length, max: env.MAX_ASSETS_PER_SCAN },
+        ...requestContext(req),
+      });
+      throw new AppError(
+        422,
+        "TOO_MANY_ASSETS_PER_SCAN",
+        `Un escaneo admite hasta ${env.MAX_ASSETS_PER_SCAN} activos y este tiene ${assets.length}. Creá una auditoría eligiendo menos activos.`
+      );
     }
 
     if (assets.length === 0) {
@@ -151,6 +237,7 @@ scansRouter.post(
       assetId: a.id,
       assetType: a.type as ScanTargetAsset["assetType"],
       assetValue: a.value,
+      ...(a.parent ? { parentDomain: a.parent.value } : {}),
     }));
 
     // Rate limiting por organización (a.md, hardening del motor de

@@ -293,6 +293,11 @@ export const dictionaries = {
     assets: {
       title: "Activos",
       assetLimitCounter: "{count}/{max} activos",
+      subdomainLimitCounter: "{count}/{max} subdominios",
+      subdomainBadge: "Subdominio",
+      enableFromParent: "Habilitar",
+      enableFromParentHint: "Usa la verificación de su dominio padre",
+      enableFromParentFailed: "No se pudo habilitar el subdominio",
       addAsset: "Agregar activo",
       editAsset: "Editar activo",
       colType: "Tipo",
@@ -1127,6 +1132,11 @@ export const dictionaries = {
     assets: {
       title: "Assets",
       assetLimitCounter: "{count}/{max} assets",
+      subdomainLimitCounter: "{count}/{max} subdomains",
+      subdomainBadge: "Subdomain",
+      enableFromParent: "Enable",
+      enableFromParentHint: "Uses its parent domain's verification",
+      enableFromParentFailed: "Couldn't enable the subdomain",
       addAsset: "Add asset",
       editAsset: "Edit asset",
       colType: "Type",

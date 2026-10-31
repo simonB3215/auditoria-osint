@@ -1392,6 +1392,13 @@ de terceros sin autorización.
 - **Activos IP/CIDR**: siguen su verificación directa (autoatestación de un
   `ciso`). El trámite de dominios está en `/assets/verify`, el link de correo
   abre `/verify-domain` y la cola de revisión está en `/admin/domain-reviews`.
+- **Subdominios**: un `ciso` los habilita desde el dominio padre verificado
+  (`POST /assets/:id/enable-from-parent`), con su propio límite
+  (`MAX_SUBDOMAIN_ASSETS_PER_ORG`). Si apuntan con CNAME fuera del dominio padre
+  no se habilitan, y el worker vuelve a comprobarlo antes de escanear. Borrar el
+  dominio padre borra sus subdominios. Un escaneo admite hasta
+  `MAX_ASSETS_PER_SCAN` activos: por encima, valen los elegidos al crear la
+  auditoría.
 
 ### Compliance, trazabilidad y retención (GDPR / ISO 27001)
 - **Audit logs inmutables**: `audit_logs` registra automáticamente carga de

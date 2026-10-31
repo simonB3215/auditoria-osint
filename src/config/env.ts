@@ -24,6 +24,12 @@ const envSchema = z.object({
   // tocar la lógica de negocio; el valor por defecto no cambió (Fase de
   // auditoría pre-venta, a.md sección 2.2).
   MAX_ASSETS_PER_ORG: z.coerce.number().int().positive().default(5),
+  // Los subdominios habilitados desde un dominio padre tienen su propio límite:
+  // no agotan los activos del plan.
+  MAX_SUBDOMAIN_ASSETS_PER_ORG: z.coerce.number().int().positive().default(20),
+  // Activos de un solo escaneo. El presupuesto de tiempo del worker se deriva
+  // de acá, no del total de activos de la organización.
+  MAX_ASSETS_PER_SCAN: z.coerce.number().int().positive().default(5),
   // Techo de escaneos simultáneos (queued/running) por organización, para
   // que un solo tenant no pueda monopolizar los slots de `concurrency`
   // del scanWorker en perjuicio de las demás (a.md, hardening del motor

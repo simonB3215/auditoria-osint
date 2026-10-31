@@ -206,6 +206,8 @@ export default function AssetsPage() {
   }
 
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Aparte de `error`, que reemplaza a la tabla: un subdominio rechazado no debe esconder la lista.
+  const [enableError, setEnableError] = useState<string | null>(null);
 
   const TYPE_LABEL: Record<AssetType, string> = {
     ip: t.typeIp,
@@ -308,6 +310,30 @@ export default function AssetsPage() {
     }
   }
 
+  // Mismo criterio que el backend: bajo un dominio verificado de la organización.
+  function hasVerifiedParent(asset: Asset): boolean {
+    const value = asset.value.toLowerCase();
+    return assets.some(
+      (other) =>
+        other.type === "domain" &&
+        other.verification_status === "verified" &&
+        value.endsWith(`.${other.value.toLowerCase()}`)
+    );
+  }
+
+  async function handleEnableFromParent(id: string) {
+    setBusyId(id);
+    setEnableError(null);
+    try {
+      const res = await api.post<{ data: Asset }>(`/api/v1/assets/${id}/enable-from-parent`);
+      setAssets((prev) => prev.map((a) => (a.id === id ? { ...a, ...res.data.data } : a)));
+    } catch (err) {
+      setEnableError(getApiErrorMessage(err, t.enableFromParentFailed));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function handleVerify(id: string) {
     setBusyId(id);
     try {
@@ -332,8 +358,12 @@ export default function AssetsPage() {
           {profile && (
             <span className="text-sm text-muted-foreground">
               {t.assetLimitCounter
-                .replace("{count}", String(assets.length))
+                .replace("{count}", String(assets.filter((a) => !a.parent_asset_id).length))
                 .replace("{max}", String(profile.maxAssetsPerOrg))}
+              {assets.some((a) => a.parent_asset_id) &&
+                ` · ${t.subdomainLimitCounter
+                  .replace("{count}", String(assets.filter((a) => a.parent_asset_id).length))
+                  .replace("{max}", String(profile.maxSubdomainAssetsPerOrg))}`}
             </span>
           )}
         </div>
@@ -508,6 +538,12 @@ export default function AssetsPage() {
         </Dialog>
       </div>
 
+      {enableError && (
+        <Alert variant="destructive">
+          <AlertDescription>{enableError}</AlertDescription>
+        </Alert>
+      )}
+
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-center gap-3">
           <CardTitle className="text-base">{t.title}</CardTitle>
@@ -581,12 +617,29 @@ export default function AssetsPage() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={asset.verification_status === "verified" ? "default" : "secondary"}>
-                        {asset.verification_status === "verified" ? t.verified : t.pending}
-                      </Badge>
+                      <div className="flex flex-wrap gap-1">
+                        <Badge variant={asset.verification_status === "verified" ? "default" : "secondary"}>
+                          {asset.verification_status === "verified" ? t.verified : t.pending}
+                        </Badge>
+                        {asset.parent_asset_id && <Badge variant="outline">{t.subdomainBadge}</Badge>}
+                      </div>
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
+                        {asset.verification_status !== "verified" &&
+                          asset.type === "domain" &&
+                          profile?.role === "ciso" &&
+                          hasVerifiedParent(asset) && (
+                            <Button
+                              size="sm"
+                              title={t.enableFromParentHint}
+                              disabled={busyId === asset.id}
+                              onClick={() => handleEnableFromParent(asset.id)}
+                            >
+                              <ShieldCheck className="size-3.5" aria-hidden />
+                              {t.enableFromParent}
+                            </Button>
+                          )}
                         {asset.verification_status !== "verified" && asset.type === "domain" && (
                           <Button size="sm" variant="outline" asChild>
                             <Link href={`/assets/verify?asset=${asset.id}`}>

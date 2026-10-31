@@ -9,6 +9,7 @@ export interface Profile {
   expiresAt: string | null;
   /** Límite de activos por organización (`MAX_ASSETS_PER_ORG` del backend) — nunca hardcodear este número en el frontend. */
   maxAssetsPerOrg: number;
+  maxSubdomainAssetsPerOrg: number;
 }
 
 export type AuditStatus = "draft" | "queued" | "running" | "completed" | "failed";
@@ -36,6 +37,7 @@ export interface Asset {
   tags: string[];
   verification_status: AssetVerificationStatus;
   verified_at: string | null;
+  parent_asset_id: string | null;
   created_at: string;
 }
 

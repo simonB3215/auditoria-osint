@@ -1,11 +1,15 @@
 import { Router } from "express";
-import { authenticateToken, requireRole } from "../middlewares/auth.js";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { authenticateToken, requireMfa, requireRole } from "../middlewares/auth.js";
+import { sensitiveActionRateLimiter } from "../middlewares/security.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../middlewares/errorHandler.js";
 import { supabaseAdmin, supabaseForUser } from "../config/supabase.js";
 import { assetInputSchema } from "../validators/assetValidators.js";
 import { validateUuidParams } from "../middlewares/validateParams.js";
 import { env } from "../config/env.js";
+import { AUDIT_ACTIONS, logAuditEvent, requestContext } from "../services/auditLogger.js";
+import { checkSubdomainScope, isSubdomainOf } from "../services/subdomainScope.js";
 
 export const assetsRouter = Router();
 
@@ -19,6 +23,37 @@ export const assetsRouter = Router();
  */
 const MAX_ASSETS_PER_ORGANIZATION = env.MAX_ASSETS_PER_ORG;
 
+/** El dominio verificado más específico de la organización que contiene a `value`. */
+async function findVerifiedParent(
+  supabase: SupabaseClient,
+  value: string
+): Promise<{ id: string; value: string } | null> {
+  const { data, error } = await supabase
+    .from("assets")
+    .select("id, value")
+    .eq("type", "domain")
+    .eq("verification_status", "verified");
+  if (error) throw new AppError(400, "ASSETS_FETCH_FAILED", error.message);
+
+  const parents = (data ?? []).filter((asset) => isSubdomainOf(value, asset.value));
+  return parents.sort((a, b) => b.value.length - a.value.length)[0] ?? null;
+}
+
+async function assertSubdomainCapacity(supabase: SupabaseClient): Promise<void> {
+  const { count, error } = await supabase
+    .from("assets")
+    .select("id", { count: "exact", head: true })
+    .not("parent_asset_id", "is", null);
+  if (error) throw new AppError(400, "ASSETS_COUNT_FAILED", error.message);
+  if ((count ?? 0) >= env.MAX_SUBDOMAIN_ASSETS_PER_ORG) {
+    throw new AppError(
+      403,
+      "SUBDOMAIN_LIMIT_REACHED",
+      `Tu organización alcanzó el máximo de ${env.MAX_SUBDOMAIN_ASSETS_PER_ORG} subdominios. Eliminá alguno antes de registrar uno nuevo.`
+    );
+  }
+}
+
 assetsRouter.post(
   "/assets",
   authenticateToken,
@@ -28,21 +63,31 @@ assetsRouter.post(
     const profile = req.profile!;
     const supabase = supabaseForUser(profile.accessToken);
 
-    const { count: existingCount, error: countError } = await supabase
-      .from("assets")
-      .select("id", { count: "exact", head: true });
-    if (countError) throw new AppError(400, "ASSETS_COUNT_FAILED", countError.message);
-    if ((existingCount ?? 0) >= MAX_ASSETS_PER_ORGANIZATION) {
-      throw new AppError(
-        403,
-        "ASSET_LIMIT_REACHED",
-        `Tu organización alcanzó el máximo de ${MAX_ASSETS_PER_ORGANIZATION} activos del plan MVP. Eliminá alguno existente antes de registrar uno nuevo.`
-      );
+    // Bajo un dominio ya verificado cuenta como subdominio, con su propio límite.
+    const parent = body.type === "domain" ? await findVerifiedParent(supabase, body.value) : null;
+
+    if (parent) {
+      await assertSubdomainCapacity(supabase);
+    } else {
+      const { count: existingCount, error: countError } = await supabase
+        .from("assets")
+        .select("id", { count: "exact", head: true })
+        .is("parent_asset_id", null);
+      if (countError) throw new AppError(400, "ASSETS_COUNT_FAILED", countError.message);
+      if ((existingCount ?? 0) >= MAX_ASSETS_PER_ORGANIZATION) {
+        throw new AppError(
+          403,
+          "ASSET_LIMIT_REACHED",
+          `Tu organización alcanzó el máximo de ${MAX_ASSETS_PER_ORGANIZATION} activos del plan MVP. Eliminá alguno existente antes de registrar uno nuevo.`
+        );
+      }
     }
 
-    const { data, error } = await supabase
+    // `parent_asset_id` solo se escribe con service_role (migración 024).
+    const { data, error } = await (parent ? supabaseAdmin : supabase)
       .from("assets")
       .insert({
+        parent_asset_id: parent?.id ?? null,
         type: body.type,
         value: body.value,
         criticality: body.criticality,
@@ -50,7 +95,7 @@ assetsRouter.post(
         organization_id: profile.organizationId,
         created_by: profile.id,
       })
-      .select("id, type, value, criticality, tags, verification_status, created_at")
+      .select("id, type, value, criticality, tags, verification_status, parent_asset_id, created_at")
       .single();
 
     if (error) {
@@ -85,7 +130,7 @@ assetsRouter.get(
 
     let query = supabase
       .from("assets")
-      .select("id, type, value, criticality, tags, verification_status, verified_at, created_at")
+      .select("id, type, value, criticality, tags, verification_status, verified_at, parent_asset_id, created_at")
       .order("created_at", { ascending: false });
 
     const { type, criticality, tag } = req.query;
@@ -113,7 +158,7 @@ assetsRouter.get(
 
     const { data, error } = await supabase
       .from("assets")
-      .select("id, type, value, criticality, tags, verification_status, verified_at, created_at")
+      .select("id, type, value, criticality, tags, verification_status, verified_at, parent_asset_id, created_at")
       .eq("id", req.params.id)
       .maybeSingle();
 
@@ -216,6 +261,94 @@ assetsRouter.post(
     if (updateError) {
       throw new AppError(400, "ASSET_VERIFY_FAILED", updateError.message);
     }
+
+    res.status(200).json({ data: updated });
+  })
+);
+
+/**
+ * Habilita un subdominio desde su dominio padre verificado, sin repetir la
+ * declaración. No aplica si apunta con CNAME a un tercero: eso no es
+ * infraestructura del cliente, aunque el dominio padre lo sea.
+ */
+assetsRouter.post(
+  "/assets/:id/enable-from-parent",
+  authenticateToken,
+  requireRole(["ciso"]),
+  requireMfa,
+  validateUuidParams("id"),
+  sensitiveActionRateLimiter,
+  asyncHandler(async (req, res) => {
+    const profile = req.profile!;
+    const supabase = supabaseForUser(profile.accessToken);
+
+    const { data: asset, error: fetchError } = await supabase
+      .from("assets")
+      .select("id, type, value, verification_status, parent_asset_id")
+      .eq("id", req.params.id)
+      .maybeSingle();
+    if (fetchError) throw new AppError(400, "ASSET_FETCH_FAILED", fetchError.message);
+    if (!asset) throw new AppError(404, "ASSET_NOT_FOUND", "Activo no encontrado");
+    if (asset.type !== "domain") {
+      throw new AppError(422, "SUBDOMAIN_REQUIRES_DOMAIN", "Solo un dominio se puede habilitar desde su dominio padre");
+    }
+    if (asset.verification_status === "verified") {
+      throw new AppError(409, "ASSET_ALREADY_VERIFIED", "Este subdominio ya está verificado");
+    }
+
+    const parent = await findVerifiedParent(supabase, asset.value);
+    if (!parent) {
+      throw new AppError(422, "NO_VERIFIED_PARENT", "Este dominio no está bajo un dominio verificado de tu organización");
+    }
+    // Registrado antes de verificar el padre: todavía cuenta como activo normal.
+    if (!asset.parent_asset_id) await assertSubdomainCapacity(supabase);
+
+    const scope = await checkSubdomainScope(asset.value, parent.value);
+    if (!scope.ok) {
+      await logAuditEvent({
+        organizationId: profile.organizationId,
+        actorId: profile.id,
+        action: AUDIT_ACTIONS.SUBDOMAIN_ENABLE_BLOCKED,
+        resourceType: "asset",
+        resourceId: asset.id,
+        payloadAfter: { domain: asset.value, parentDomain: parent.value, ...scope },
+        ...requestContext(req),
+      });
+      if (scope.reason === "third_party_cname") {
+        throw new AppError(
+          422,
+          "SUBDOMAIN_THIRD_PARTY_CNAME",
+          `${asset.value} apunta a ${scope.target}, que no es de ${parent.value}. Si esa infraestructura es tuya, verificalo con una declaración propia.`
+        );
+      }
+      if (scope.reason === "not_found") {
+        throw new AppError(422, "SUBDOMAIN_NOT_FOUND", `${asset.value} no existe en DNS`);
+      }
+      throw new AppError(503, "DNS_UNAVAILABLE", "No se pudo comprobar el DNS del subdominio. Intentá de nuevo más tarde.");
+    }
+
+    const { data: updated, error: updateError } = await supabaseAdmin
+      .from("assets")
+      .update({
+        verification_status: "verified",
+        verified_at: new Date().toISOString(),
+        parent_asset_id: parent.id,
+      })
+      .eq("id", asset.id)
+      .eq("organization_id", profile.organizationId)
+      .select("id, type, value, verification_status, verified_at, parent_asset_id")
+      .single();
+    if (updateError) throw new AppError(400, "ASSET_VERIFY_FAILED", updateError.message);
+
+    await logAuditEvent({
+      organizationId: profile.organizationId,
+      actorId: profile.id,
+      action: AUDIT_ACTIONS.SUBDOMAIN_ENABLED,
+      resourceType: "asset",
+      resourceId: asset.id,
+      payloadAfter: { domain: asset.value, parentDomain: parent.value },
+      ...requestContext(req),
+    });
 
     res.status(200).json({ data: updated });
   })

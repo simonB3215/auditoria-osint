@@ -8,6 +8,8 @@ export interface ScanTargetAsset {
   assetId: string;
   assetType: "ip" | "cidr" | "domain" | "repository" | "cloud_server";
   assetValue: string;
+  /** Solo en subdominios habilitados desde un padre: el worker revalida su CNAME contra este dominio. */
+  parentDomain?: string;
 }
 
 export interface ScanJobData {

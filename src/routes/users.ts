@@ -15,7 +15,7 @@ usersRouter.get(
     // /users/me ya es el endpoint de perfil que se pide en casi todas las
     // páginas autenticadas (ver frontend/src/hooks/useProfile.ts).
     res.status(200).json({
-      data: { id, organizationId, role, isPlatformAdmin, expiresAt, maxAssetsPerOrg: env.MAX_ASSETS_PER_ORG },
+      data: { id, organizationId, role, isPlatformAdmin, expiresAt, maxAssetsPerOrg: env.MAX_ASSETS_PER_ORG, maxSubdomainAssetsPerOrg: env.MAX_SUBDOMAIN_ASSETS_PER_ORG },
     });
   })
 );

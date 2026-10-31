@@ -13,6 +13,7 @@ import {
   NMAP_TIMEOUT_MS,
 } from "./scanEngine.js";
 import { resolveAndCheckScope, matchCdnRange } from "./ipScopeCheck.js";
+import { checkSubdomainScope } from "../services/subdomainScope.js";
 import {
   normalizeOpenPorts,
   normalizeTlsFindings,
@@ -40,11 +41,11 @@ const PER_ASSET_CHECKS_MARGIN_MS = 60 * 1000;
  * Presupuesto de tiempo total por job (a.md, hardening del motor de
  * escaneo sección 1.2; recalculado en el seguimiento, Tarea 2).
  * `processScanJob` recorre los activos en SECUENCIA, así que el peor caso
- * real es la suma de todos: `MAX_ASSETS_PER_ORG` activos, cada uno hasta
+ * real es la suma de todos: `MAX_ASSETS_PER_SCAN` activos, cada uno hasta
  * `NMAP_TIMEOUT_MS` (el timeout duro de una sola invocación de nmap,
  * importado de scanEngine.ts — no un valor separado que pueda
  * desincronizarse) más el margen de chequeos de arriba. Derivado de
- * `env.MAX_ASSETS_PER_ORG`, no hardcodeado, para que si ese límite
+ * `env.MAX_ASSETS_PER_SCAN`, no hardcodeado, para que si ese límite
  * cambia, el presupuesto se recalcula solo.
  *
  * Nota sobre el acoplamiento con Tarea 3 (`SCAN_TOP_PORTS`): ampliar el
@@ -56,7 +57,7 @@ const PER_ASSET_CHECKS_MARGIN_MS = 60 * 1000;
  * hace variable, este presupuesto tiene que recalcularse — de ahí que
  * quede expresado en términos de la constante, no de un número suelto.
  */
-const JOB_TIME_BUDGET_MS = env.MAX_ASSETS_PER_ORG * (NMAP_TIMEOUT_MS + PER_ASSET_CHECKS_MARGIN_MS);
+const JOB_TIME_BUDGET_MS = env.MAX_ASSETS_PER_SCAN * (NMAP_TIMEOUT_MS + PER_ASSET_CHECKS_MARGIN_MS);
 
 /**
  * `lockDuration` del Worker (ver más abajo): tiene que ser mayor al peor
@@ -141,6 +142,26 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
     // nunca llega hasta acá (bloqueado arriba).
     let scanTarget = asset.assetValue;
     if (asset.assetType === "domain") {
+      // Un subdominio se habilitó porque era del dominio padre, pero su CNAME
+      // puede haber cambiado desde entonces: se vuelve a comprobar antes de
+      // tocarlo, igual que el chequeo de CDN de abajo.
+      if (asset.parentDomain) {
+        const subdomainScope = await checkSubdomainScope(asset.assetValue, asset.parentDomain);
+        if (!subdomainScope.ok) {
+          const detail = `${asset.assetValue}: ya no se puede confirmar que sea de ${asset.parentDomain} (${subdomainScope.reason})`;
+          failures.push(detail);
+          await logAuditEvent({
+            organizationId,
+            actorId,
+            action: AUDIT_ACTIONS.SCAN_TARGET_OUT_OF_SCOPE,
+            resourceType: "scan",
+            resourceId: asset.assetId,
+            payloadAfter: { target: asset.assetValue, assetType: asset.assetType, detail },
+          });
+          continue;
+        }
+      }
+
       const scopeCheck = await resolveAndCheckScope(asset.assetValue);
       if (!scopeCheck.ok) {
         failures.push(`${asset.assetValue}: ${scopeCheck.detail}`);
