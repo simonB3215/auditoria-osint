@@ -1,0 +1,115 @@
+name: Tests (integración real)
+
+# Pipeline de CI nuevo (prompts.md, "Parte 2 - Suite de integracion en CI").
+# La suite es de integración real contra Supabase (sin mocks) — este
+# workflow levanta un stack de Supabase LOCAL y efímero (Postgres + Auth +
+# Storage vía `supabase start`, contenedores Docker dentro del propio
+# runner) para cada corrida, en vez de apuntar a un proyecto en la nube.
+# Se eligió así a propósito, no solo por lo que ya advertía el prompt
+# ("estado compartido entre corridas") — se detectó que `.env.test` local
+# apunta hoy al MISMO proyecto Supabase que `.env` (no está realmente
+# aislado de desarrollo). Este workflow no depende de eso: es una
+# instancia nueva y descartable en cada corrida, sin secrets de Supabase
+# que gestionar y sin ningún riesgo de tocar datos reales.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Backstop duro: `supabase start` es conocido por colgarse en el
+    # healthcheck en corridas de CI (supabase/cli#2456) — sin este límite,
+    # un job colgado consumiría minutos de Actions indefinidamente.
+    timeout-minutes: 20
+
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # 22, no 20: @supabase/supabase-js necesita el WebSocket nativo de
+          # Node 22 y con 20 falla al crear el cliente.
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Docker ya viene preinstalado en los runners ubuntu-latest de
+      # GitHub — no hace falta ningún setup extra de Docker-in-Docker acá
+      # (sí haría falta en runners Windows/macOS, no es el caso).
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v3
+        with:
+          # Versión fijada a propósito (no "latest"): el formato de
+          # salida de `supabase status` cambió entre versiones — fijarla
+          # evita que una corrida futura se rompa por un cambio del CLI
+          # ajeno a este repo. Confirmada como la última release real al
+          # momento de escribir esto (github.com/supabase/cli/releases).
+          version: "2.116.0"
+
+      - name: Init proyecto Supabase local
+        run: supabase init
+
+      - name: Levantar stack local de Supabase (Postgres + Auth + Storage)
+        run: supabase start --ignore-health-check
+
+      # Se escribe como `.env` (no `.env.test`): en este runner efímero no
+      # existe distinción entre "el .env" y "el .env de test" — es el
+      # único entorno que existe acá. Esto además hace que lo recojan
+      # sin plomería extra tanto `db/run-migrations.ts` y
+      # `db/setup-storage.ts` (usan `dotenv/config`, que lee `.env`) como
+      # `tests/loadEnv.ts` (cae a `.env` si no encuentra `.env.test`).
+      #
+      # `-o env --override-name` es el patrón que documenta el propio CLI
+      # (ver supabase/setup-cli#readme) para no depender de parsear los
+      # nombres de campo de `-o json`, que el propio Supabase reporta como
+      # inestables entre versiones (supabase/cli#4675).
+      - name: Generar .env con las credenciales del stack local
+        run: |
+          set -e
+          echo "--- supabase status -o env (sin overrides, para debug si algo falla) ---"
+          supabase status -o env
+
+          {
+            echo "PORT=3000"
+            echo "NODE_ENV=test"
+            echo "CORS_ORIGIN=http://localhost:5173"
+            echo "REDIS_URL=redis://localhost:6379"
+            echo "EVIDENCE_BUCKET=evidences"
+            echo "REPORTS_BUCKET=reports"
+            echo "EVIDENCE_ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")"
+          } > .env
+
+          supabase status -o env \
+            --override-name api.url=SUPABASE_URL \
+            --override-name auth.anon_key=SUPABASE_ANON_KEY \
+            --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY \
+            --override-name db.url=DATABASE_URL \
+            >> .env
+
+      - name: Aplicar schema y migraciones
+        run: npm run db:migrate
+
+      - name: Crear buckets de Storage
+        run: npm run storage:setup
+
+      - name: Correr la suite
+        run: npm test
