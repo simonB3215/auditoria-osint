@@ -9,7 +9,6 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "worker:scan": "tsx watch src/jobs/scanWorker.ts",
-    "worker:domain-verify": "tsx watch src/jobs/domainVerifyWorker.ts",
     "worker:retention": "tsx watch src/jobs/retentionWorker.ts",
     "worker:economic-indicators": "tsx watch src/jobs/economicIndicatorsWorker.ts",
     "db:migrate": "tsx db/run-migrations.ts",

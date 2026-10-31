@@ -48,10 +48,10 @@ localmente con la `service_role` key, nunca desde la UI ni un endpoint.
 
 - **Activos (`/assets`)**: registro de IP pública o dominio (los únicos
   dos tipos que el modal de alta ofrece hoy — ver sección 6). Verificación
-  de propiedad obligatoria antes de poder escanear: dominios vía registro
-  DNS TXT (con hasta 5 reintentos automáticos en segundo plano durante 24h,
-  además del botón manual "Verificar ahora"), IPs vía autoatestación de un
-  `ciso`. Límite duro de **5 activos por organización**.
+  de propiedad obligatoria antes de poder escanear: dominios con
+  declaración firmada, poderes, correo y revisión manual (aún sin desplegar:
+  faltan revisión legal, proveedor de firma y Resend), IPs vía autoatestación
+  de un `ciso`. Límite duro de **5 activos por organización**.
 - **Auditorías (`/audits`)**: se crean eligiendo un framework. El
   **Módulo A** (escaneo técnico de red, Nmap real, cero archivos/cero
   credenciales, con modal de confirmación legal — Ley N° 21.459 — antes
@@ -85,8 +85,7 @@ localmente con la `service_role` key, nunca desde la UI ni un endpoint.
   (costos reales estimados por organización/auditoría, simulador de
   punto de equilibrio), retención GDPR configurable con purga autónoma.
 - **Notificaciones por email**: al completar un escaneo (con aviso
-  destacado si hubo hallazgos críticos) y para delegar la verificación
-  DNS a un equipo de TI. Todas siguen el patrón **"preparado pero no
+  destacado si hubo hallazgos críticos). Sigue el patrón **"preparado pero no
   conectado"**: sin `RESEND_API_KEY` configurada, el contenido se
   registra en el log del servidor en vez de enviarse de verdad — el
   código ya está listo para el día que se configure un proveedor real.

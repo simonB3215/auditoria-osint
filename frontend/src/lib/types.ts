@@ -36,7 +36,6 @@ export interface Asset {
   tags: string[];
   verification_status: AssetVerificationStatus;
   /** Código a publicar en el TXT del dominio. Solo tiene sentido para type === "domain". */
-  verification_token?: string;
   verified_at: string | null;
   created_at: string;
 }

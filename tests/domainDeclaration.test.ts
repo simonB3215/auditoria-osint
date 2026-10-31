@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { api, bearer } from "./helpers/apiClient.js";
 import {
   createDomainAsset,
   countDeclarations,
@@ -193,5 +194,23 @@ describe("Parte 1 (V2): rechazos al declarar un dominio", () => {
     expect(second.status).toBe(409);
     expect(second.body.error.code).toBe("DOMAIN_DECLARATION_ALREADY_OPEN");
     expect(await countDeclarations(otherOrgId)).toBe(1);
+  });
+
+  test("TC-VER-28: el flujo TXT ya no existe", async () => {
+    const verify = await api.post(`/api/v1/assets/${assetId}/verify`).set("Authorization", bearer(ciso.accessToken));
+    expect(verify.status).toBe(422);
+    expect(verify.body.error.code).toBe("DOMAIN_REQUIRES_DECLARATION");
+    const { data: asset } = await supabaseAdmin.from("assets").select("verification_status").eq("id", assetId).single();
+    expect(asset?.verification_status).toBe("pending");
+
+    const delegate = await api
+      .post(`/api/v1/assets/${assetId}/delegate-verification`)
+      .set("Authorization", bearer(ciso.accessToken))
+      .send({ email: "ti@example.com" });
+    expect(delegate.status).toBe(404);
+
+    const read = await api.get(`/api/v1/assets/${assetId}`).set("Authorization", bearer(ciso.accessToken));
+    expect(read.status).toBe(200);
+    expect(read.body.data).not.toHaveProperty("verification_token");
   });
 });

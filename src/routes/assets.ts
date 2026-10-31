@@ -1,17 +1,11 @@
 import { Router } from "express";
-import { resolveTxt } from "node:dns/promises";
-import { z } from "zod";
 import { authenticateToken, requireRole } from "../middlewares/auth.js";
-import { sensitiveActionRateLimiter } from "../middlewares/security.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../middlewares/errorHandler.js";
 import { supabaseAdmin, supabaseForUser } from "../config/supabase.js";
 import { assetInputSchema } from "../validators/assetValidators.js";
 import { validateUuidParams } from "../middlewares/validateParams.js";
 import { env } from "../config/env.js";
-import { AUDIT_ACTIONS, logAuditEvent, requestContext } from "../services/auditLogger.js";
-import { sendDomainDelegationEmail } from "../services/emailTemplates.js";
-import { domainVerifyQueue, DOMAIN_VERIFY_RETRY_DELAYS_MS } from "../jobs/domainVerifyQueue.js";
 
 export const assetsRouter = Router();
 
@@ -56,7 +50,7 @@ assetsRouter.post(
         organization_id: profile.organizationId,
         created_by: profile.id,
       })
-      .select("id, type, value, criticality, tags, verification_status, verification_token, created_at")
+      .select("id, type, value, criticality, tags, verification_status, created_at")
       .single();
 
     if (error) {
@@ -78,21 +72,6 @@ assetsRouter.post(
       throw new AppError(400, "ASSET_CREATE_FAILED", error.message);
     }
 
-    // Reintentos automáticos de verificación DNS (a.md, "MVP: REGLAS DE
-    // NEGOCIO..."): arrancan solos al crear el dominio, sin que el usuario
-    // tenga que volver a tocar nada — el botón "Verificar ahora" sigue
-    // sirviendo para no esperar. Best-effort: si Redis no responde, no
-    // aborta la creación del activo por eso.
-    if (data.type === "domain") {
-      await domainVerifyQueue
-        .add(
-          "retry-verify",
-          { assetId: data.id, organizationId: profile.organizationId, attempt: 1 },
-          { delay: DOMAIN_VERIFY_RETRY_DELAYS_MS[0] }
-        )
-        .catch((err) => console.error(`[assets] no se pudo agendar la verificación automática de ${data.id}:`, err));
-    }
-
     res.status(201).json({ data });
   })
 );
@@ -106,7 +85,7 @@ assetsRouter.get(
 
     let query = supabase
       .from("assets")
-      .select("id, type, value, criticality, tags, verification_status, verification_token, verified_at, created_at")
+      .select("id, type, value, criticality, tags, verification_status, verified_at, created_at")
       .order("created_at", { ascending: false });
 
     const { type, criticality, tag } = req.query;
@@ -134,7 +113,7 @@ assetsRouter.get(
 
     const { data, error } = await supabase
       .from("assets")
-      .select("id, type, value, criticality, tags, verification_status, verification_token, verified_at, created_at")
+      .select("id, type, value, criticality, tags, verification_status, verified_at, created_at")
       .eq("id", req.params.id)
       .maybeSingle();
 
@@ -173,20 +152,15 @@ assetsRouter.delete(
 );
 
 /**
- * Verificación de propiedad. Requisito previo para poder incluir el activo
- * en un escaneo activo (ver POST /audits/:id/run-scan y su security gate
- * explícito para dominios no verificados).
+ * Verificación de propiedad de activos que no son dominios. Requisito previo
+ * para poder incluirlos en un escaneo activo (ver POST /audits/:id/run-scan).
  *
- * - domain: se exige un registro DNS TXT en la RAÍZ del propio dominio
- *   (Nombre: `@`) con el valor `aegis-site-verification=<verification_token>`
- *   — formato de un solo registro, sin subdominio dedicado, para que
- *   cualquier persona no técnica pueda seguir los pasos desde el panel de
- *   su proveedor DNS (Cloudflare, NIC Chile, GoDaddy, etc.).
- * - ip / cidr: no existe un mecanismo DNS equivalente sencillo para el MVP;
- *   se acepta la autoatestación de un rol `ciso` (dueño de la cuenta de la
- *   organización). Limitación conocida: no prueba criptográficamente la
- *   titularidad del rango — a mejorar en una iteración futura (ej. RDAP/WHOIS
- *   cruzado contra el dominio corporativo verificado).
+ * - ip / cidr: se acepta la autoatestación de un rol `ciso` (dueño de la
+ *   cuenta de la organización). Limitación conocida: no prueba
+ *   criptográficamente la titularidad del rango — a mejorar en una iteración
+ *   futura (ej. RDAP/WHOIS cruzado contra el dominio corporativo verificado).
+ * - domain: nunca se verifica por esta ruta. Exige declaración firmada,
+ *   poderes y revisión manual: ver routes/domainVerification.ts.
  */
 assetsRouter.post(
   "/assets/:id/verify",
@@ -199,7 +173,7 @@ assetsRouter.post(
 
     const { data: asset, error: fetchError } = await supabase
       .from("assets")
-      .select("id, type, value, verification_token, verification_status, created_by")
+      .select("id, type, value, verification_status")
       .eq("id", req.params.id)
       .maybeSingle();
 
@@ -215,26 +189,13 @@ assetsRouter.post(
     }
 
     if (asset.type === "domain") {
-      const expected = `aegis-site-verification=${asset.verification_token}`;
-      let records: string[][] = [];
-      try {
-        records = await resolveTxt(asset.value);
-      } catch {
-        throw new AppError(
-          422,
-          "DNS_RECORD_NOT_FOUND",
-          `No se encontró ningún registro TXT en ${asset.value}. Esperado: "${expected}"`
-        );
-      }
-      const found = records.some((chunks) => chunks.join("").trim() === expected);
-      if (!found) {
-        throw new AppError(
-          422,
-          "DNS_RECORD_MISMATCH",
-          `El registro TXT encontrado no coincide con el código esperado ("${expected}")`
-        );
-      }
-    } else if (profile.role !== "ciso") {
+      throw new AppError(
+        422,
+        "DOMAIN_REQUIRES_DECLARATION",
+        "Los dominios se verifican con una declaración firmada: ver POST /domain-declarations"
+      );
+    }
+    if (profile.role !== "ciso") {
       throw new AppError(
         403,
         "VERIFICATION_REQUIRES_CISO",
@@ -243,12 +204,7 @@ assetsRouter.post(
     }
 
     // Con service_role porque la migración 023 impide escribir estas columnas
-    // con el JWT del usuario. La regla de `assets_modify` ya no aplica sola a
-    // este cliente, así que se repite acá.
-    if (profile.role !== "ciso" && asset.created_by !== profile.id) {
-      throw new AppError(400, "ASSET_VERIFY_FAILED", "Solo quien creó el activo o un ciso puede verificarlo");
-    }
-
+    // con el JWT del usuario.
     const { data: updated, error: updateError } = await supabaseAdmin
       .from("assets")
       .update({ verification_status: "verified", verified_at: new Date().toISOString() })
@@ -262,78 +218,5 @@ assetsRouter.post(
     }
 
     res.status(200).json({ data: updated });
-  })
-);
-
-const delegateVerificationSchema = z.object({
-  email: z.string().trim().email(),
-});
-
-/**
- * Flujo "Enviar a mi equipo de TI" (a.md, sección 3.C): quien pide la
- * auditoría a menudo no es quien tiene acceso al panel DNS. En vez de
- * obligarlo a copiar/pegar el código a mano por fuera de la plataforma, se
- * le arma y envía el correo con el registro TXT exacto. Reusa el patrón
- * "preparado pero no conectado" de emailTemplates.ts — sin RESEND_API_KEY
- * el correo se registra en consola en vez de entregarse de verdad.
- */
-assetsRouter.post(
-  "/assets/:id/delegate-verification",
-  authenticateToken,
-  requireRole(["ciso", "auditor"]),
-  validateUuidParams("id"),
-  sensitiveActionRateLimiter,
-  asyncHandler(async (req, res) => {
-    const profile = req.profile!;
-    const supabase = supabaseForUser(profile.accessToken);
-    const body = delegateVerificationSchema.parse(req.body);
-
-    const { data: asset, error: fetchError } = await supabase
-      .from("assets")
-      .select("id, type, value, verification_token, verification_status")
-      .eq("id", req.params.id)
-      .maybeSingle();
-
-    if (fetchError) {
-      throw new AppError(400, "ASSET_FETCH_FAILED", fetchError.message);
-    }
-    if (!asset) {
-      throw new AppError(404, "ASSET_NOT_FOUND", "Activo no encontrado");
-    }
-    if (asset.type !== "domain") {
-      throw new AppError(
-        422,
-        "DELEGATION_REQUIRES_DOMAIN",
-        "La delegación a TI por correo solo aplica a activos de tipo dominio"
-      );
-    }
-    if (asset.verification_status === "verified") {
-      throw new AppError(409, "ASSET_ALREADY_VERIFIED", "Este dominio ya está verificado");
-    }
-
-    const [{ data: requesterProfile }, { data: organization }] = await Promise.all([
-      supabase.from("profiles").select("full_name").eq("id", profile.id).maybeSingle(),
-      supabase.from("organizations").select("name").eq("id", profile.organizationId).maybeSingle(),
-    ]);
-
-    const template = await sendDomainDelegationEmail(body.email, {
-      requesterName: requesterProfile?.full_name ?? "Un miembro de tu organización",
-      organizationName: organization?.name ?? "su organización",
-      domain: asset.value,
-      verificationToken: asset.verification_token,
-      verifyUrl: `${env.CORS_ORIGIN}/assets`,
-    });
-
-    await logAuditEvent({
-      organizationId: profile.organizationId,
-      actorId: profile.id,
-      action: AUDIT_ACTIONS.DOMAIN_VERIFICATION_EMAIL_SENT,
-      resourceType: "asset",
-      resourceId: asset.id,
-      payloadAfter: { domain: asset.value, sentTo: body.email, subject: template.subject },
-      ...requestContext(req),
-    });
-
-    res.status(202).json({ data: { sentTo: body.email, subject: template.subject } });
   })
 );

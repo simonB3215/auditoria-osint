@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Check, Copy, Globe, HelpCircle, Loader2, Mail, Plus, ShieldCheck, Trash2, X } from "lucide-react";
+import { Globe, HelpCircle, Loader2, Plus, ShieldCheck, Trash2, X } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
 import type { Asset, AssetCriticality, AssetType } from "@/lib/types";
 import { useI18n } from "@/lib/i18n/context";
@@ -206,17 +206,8 @@ export default function AssetsPage() {
 
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  // Verificación guiada de dominio (a.md, sección UX): activo actual del
-  // modal + copiado del código + sub-modal de delegación a TI.
+  // Dominio cuyo aviso de verificación está abierto.
   const [verifyDomainAsset, setVerifyDomainAsset] = useState<Asset | null>(null);
-  const [verifyDomainError, setVerifyDomainError] = useState<string | null>(null);
-  const [tokenCopied, setTokenCopied] = useState(false);
-  const [hostCopied, setHostCopied] = useState(false);
-  const [delegateOpen, setDelegateOpen] = useState(false);
-  const [delegateEmail, setDelegateEmail] = useState("");
-  const [delegateSending, setDelegateSending] = useState(false);
-  const [delegateError, setDelegateError] = useState<string | null>(null);
-  const [delegateSuccess, setDelegateSuccess] = useState(false);
 
   const TYPE_LABEL: Record<AssetType, string> = {
     ip: t.typeIp,
@@ -328,66 +319,6 @@ export default function AssetsPage() {
       setError(getApiErrorMessage(err, t.verifyFailed));
     } finally {
       setBusyId(null);
-    }
-  }
-
-  function openVerifyDomainDialog(asset: Asset) {
-    setVerifyDomainAsset(asset);
-    setVerifyDomainError(null);
-    setTokenCopied(false);
-    setHostCopied(false);
-    setDelegateOpen(false);
-    setDelegateEmail("");
-    setDelegateError(null);
-    setDelegateSuccess(false);
-  }
-
-  function handleCopyToken() {
-    if (!verifyDomainAsset?.verification_token) return;
-    navigator.clipboard.writeText(`aegis-site-verification=${verifyDomainAsset.verification_token}`).then(() => {
-      setTokenCopied(true);
-      setTimeout(() => setTokenCopied(false), 2000);
-    });
-  }
-
-  // El host siempre es "@" (raíz del dominio del activo) — no hay un campo
-  // de subdominio separado en el modelo de Asset hoy, así que no hace
-  // falta calcularlo dinámicamente (a.md: "@ o el subdominio
-  // correspondiente").
-  function handleCopyHost() {
-    navigator.clipboard.writeText("@").then(() => {
-      setHostCopied(true);
-      setTimeout(() => setHostCopied(false), 2000);
-    });
-  }
-
-  async function handleVerifyDomainNow() {
-    if (!verifyDomainAsset) return;
-    setBusyId(verifyDomainAsset.id);
-    setVerifyDomainError(null);
-    try {
-      const res = await api.post<{ data: Asset }>(`/api/v1/assets/${verifyDomainAsset.id}/verify`);
-      setAssets((prev) => prev.map((a) => (a.id === verifyDomainAsset.id ? { ...a, ...res.data.data } : a)));
-      setVerifyDomainAsset(null);
-    } catch (err) {
-      setVerifyDomainError(getApiErrorMessage(err, t.verifyFailed));
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function handleDelegateToIt(e: FormEvent) {
-    e.preventDefault();
-    if (!verifyDomainAsset) return;
-    setDelegateSending(true);
-    setDelegateError(null);
-    try {
-      await api.post(`/api/v1/assets/${verifyDomainAsset.id}/delegate-verification`, { email: delegateEmail });
-      setDelegateSuccess(true);
-    } catch (err) {
-      setDelegateError(getApiErrorMessage(err, t.delegateFailed));
-    } finally {
-      setDelegateSending(false);
     }
   }
 
@@ -663,7 +594,7 @@ export default function AssetsPage() {
                             size="sm"
                             variant="outline"
                             disabled={busyId === asset.id}
-                            onClick={() => openVerifyDomainDialog(asset)}
+                            onClick={() => setVerifyDomainAsset(asset)}
                           >
                             <ShieldCheck className="size-3.5" aria-hidden />
                             {t.verify}
@@ -700,142 +631,15 @@ export default function AssetsPage() {
 
       <Dialog open={verifyDomainAsset !== null} onOpenChange={(open) => !open && setVerifyDomainAsset(null)}>
         <DialogContent>
-          {verifyDomainAsset && !delegateOpen && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{t.verifyDomainTitle}</DialogTitle>
-              </DialogHeader>
-              <div className="flex flex-col gap-4">
-                <p className="rounded-md border bg-muted/50 p-3 text-sm">{t.verifyDomainIntro}</p>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="flex flex-col gap-2">
-                    <Label>{t.verifyDomainHostLabel}</Label>
-                    <div className="flex items-center gap-2">
-                      <div className="flex flex-1 items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs">
-                        <span className="rounded bg-muted px-1.5 py-0.5 font-mono font-medium text-muted-foreground">
-                          {t.verifyDomainTypeLabel}
-                        </span>
-                        <span className="font-mono">@</span>
-                      </div>
-                      <Button type="button" variant="outline" size="sm" onClick={handleCopyHost}>
-                        {hostCopied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
-                        {hostCopied ? t.copied : t.copyHost}
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    <Label>{t.verifyDomainTokenLabel}</Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        readOnly
-                        value={`aegis-site-verification=${verifyDomainAsset.verification_token ?? ""}`}
-                        className="truncate font-mono text-xs"
-                        onFocus={(e) => e.target.select()}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <Button type="button" variant="secondary" onClick={handleCopyToken} className="self-start">
-                  {tokenCopied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
-                  {tokenCopied ? t.copied : t.copyValue}
-                </Button>
-
-                <div className="flex flex-col gap-2">
-                  <p className="text-sm font-medium">{t.verifyDomainStepsTitle}</p>
-                  <ol className="list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
-                    <li>{t.verifyDomainStep1}</li>
-                    <li>{t.verifyDomainStep2}</li>
-                    <li>{t.verifyDomainStep3}</li>
-                    <li>{t.verifyDomainStep4}</li>
-                  </ol>
-                  <p className="text-xs text-muted-foreground">{t.verifyDomainPropagationNote}</p>
-                </div>
-
-                {verifyDomainError && (
-                  <Alert variant="destructive">
-                    <AlertDescription>{verifyDomainError}</AlertDescription>
-                  </Alert>
-                )}
-
-                <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-between">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => {
-                      setDelegateOpen(true);
-                      setDelegateEmail("");
-                      setDelegateError(null);
-                      setDelegateSuccess(false);
-                    }}
-                    className="justify-start"
-                  >
-                    <Mail className="size-3.5" aria-hidden />
-                    {t.delegateToIt}
-                  </Button>
-                  <Button type="button" disabled={busyId === verifyDomainAsset.id} onClick={handleVerifyDomainNow}>
-                    {busyId === verifyDomainAsset.id ? (
-                      <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                    ) : (
-                      <ShieldCheck className="size-3.5" aria-hidden />
-                    )}
-                    {busyId === verifyDomainAsset.id ? t.verifying : t.verifyNow}
-                  </Button>
-                </DialogFooter>
-              </div>
-            </>
-          )}
-
-          {verifyDomainAsset && delegateOpen && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{t.delegateModalTitle}</DialogTitle>
-              </DialogHeader>
-
-              {delegateSuccess ? (
-                <div className="flex flex-col gap-4">
-                  <Alert>
-                    <AlertDescription>{t.delegateSuccess}</AlertDescription>
-                  </Alert>
-                  <Button type="button" variant="outline" onClick={() => setDelegateOpen(false)} className="self-start">
-                    {t.close}
-                  </Button>
-                </div>
-              ) : (
-                <form onSubmit={handleDelegateToIt} className="flex flex-col gap-4">
-                  <p className="text-sm text-muted-foreground">{t.delegateModalDescription}</p>
-                  <div className="flex flex-col gap-2">
-                    <Label htmlFor="delegate-email">{t.delegateEmailLabel}</Label>
-                    <Input
-                      id="delegate-email"
-                      type="email"
-                      required
-                      value={delegateEmail}
-                      onChange={(e) => setDelegateEmail(e.target.value)}
-                      placeholder={t.delegateEmailPlaceholder}
-                    />
-                  </div>
-
-                  {delegateError && (
-                    <Alert variant="destructive">
-                      <AlertDescription>{delegateError}</AlertDescription>
-                    </Alert>
-                  )}
-
-                  <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-between">
-                    <Button type="button" variant="ghost" onClick={() => setDelegateOpen(false)} className="justify-start">
-                      {t.cancel}
-                    </Button>
-                    <Button type="submit" disabled={delegateSending}>
-                      {delegateSending ? t.delegateSending : t.delegateSend}
-                    </Button>
-                  </DialogFooter>
-                </form>
-              )}
-            </>
-          )}
+          <DialogHeader>
+            <DialogTitle>{t.verifyDomainTitle}</DialogTitle>
+          </DialogHeader>
+          <p className="rounded-md border bg-muted/50 p-3 text-sm">{t.verifyDomainPending}</p>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setVerifyDomainAsset(null)}>
+              {t.close}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

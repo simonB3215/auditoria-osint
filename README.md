@@ -124,7 +124,6 @@ URLs de Supabase.
 | `npm run build` / `npm start` | Build de producción + arranque |
 | `npm run typecheck` | Solo chequeo de tipos |
 | `npm run worker:scan` | Worker que consume la cola de escaneos |
-| `npm run worker:domain-verify` | Worker que reintenta automáticamente la verificación DNS de dominios (hasta 5 intentos en 24h) |
 | `npm run worker:retention` | Worker que purga evidencias vencidas (corre diario vía BullMQ Job Scheduler; también se puede disparar manual con `POST /admin/retention/run-now`) |
 | `npm run worker:economic-indicators` | Worker que refresca UF/UTM/Dólar desde Mindicador.cl (corre diario a las 08:00 America/Santiago vía BullMQ Job Scheduler; el endpoint del panel también refresca al vuelo si el caché tiene más de 1h) |
 | `npm run db:migrate` | Aplica `schema.sql` + migraciones pendientes |
@@ -382,8 +381,8 @@ colapsable y las organizaciones desacopladas de la gestión de usuarios.
    capas: magic bytes (rechaza binarios disfrazados) y contenido semántico
    (columnas/campos obligatorios según el requisito).
 3. Se registran y verifican activos (IP/CIDR/dominio) — un activo no puede
-   escanearse hasta probar su propiedad (DNS TXT para dominios, autoatestación
-   de rol `ciso` para IP/CIDR).
+   escanearse hasta probar su propiedad (declaración firmada, poderes, correo
+   y revisión manual para dominios; autoatestación de rol `ciso` para IP/CIDR).
 4. `POST /audits/:id/run-scan` encola un job (BullMQ/Redis); el worker
    (proceso aparte) corre Nmap, además de un chequeo de certificados TLS
    (vencimiento, confianza, protocolo débil) y de cabeceras de seguridad
@@ -811,7 +810,7 @@ explícito unos commits atrás.
 - **URLs de PDF a 1 hora**: `SIGNED_URL_TTL_SECONDS` pasó de 5 minutos a
   3600s en `reports.ts` — antes era demasiado corto para que alguien
   reciba el link por otro canal (reenviado por email/chat) y lo abra.
-- **Reintentos automáticos de verificación DNS** (`src/jobs/domainVerifyQueue.ts`
+- *(Retirado: ver "Verificación de dominios".)* **Reintentos automáticos de verificación DNS** (`src/jobs/domainVerifyQueue.ts`
   + `domainVerifyWorker.ts`, proceso nuevo — `npm run worker:domain-verify`,
   mismo patrón que `scanQueue`/`scanWorker`): al crear un activo `domain`,
   `POST /assets` agenda automáticamente hasta 5 chequeos de TXT
@@ -1372,36 +1371,26 @@ de terceros sin autorización.
   sobre `assets.value` para `type = 'domain'`: un mismo dominio no puede
   quedar "verificado" por dos organizaciones a la vez, aunque cada una lo
   haya cargado de forma independiente.
-- **Desafío DNS**: `POST /assets/:id/verify` busca un registro TXT en la
-  **raíz** del dominio (`@`, sin subdominio dedicado) con el valor
-  `aegis-site-verification=<verification_token>` — un solo registro que
-  cualquier persona no técnica puede seguir desde el panel de su proveedor
-  DNS (Cloudflare, NIC Chile, GoDaddy, AWS, etc.).
+- **Verificación de dominios** (`src/routes/domainVerification.ts`): reemplaza
+  al desafío DNS TXT, que se retiró. Un `ciso` declara sus dominios en
+  `POST /domain-declarations` con un documento con firma electrónica avanzada
+  y el certificado de poderes (cifrados en el bucket `domain-declarations`).
+  Si el correo de su cuenta coincide exactamente con el dominio, recibe un link
+  de un solo uso que vence en 24 horas (`POST /domain-verification/confirm`).
+  Todo dominio termina en revisión manual (`/admin/domain-reviews`), y aprobar
+  es lo único que marca un dominio como `verified`. Falla cerrado: sin
+  `SIGNATURE_VALIDATOR_URL` no se acepta ninguna declaración, y sin
+  `RESEND_API_KEY` y `EMAIL_FROM` no queda ningún link vivo. **Nada de esto
+  se despliega a producción hasta cerrar la revisión legal, el proveedor de
+  firma y Resend**: sin ellos, ningún dominio nuevo se puede verificar.
 - **Security gate en el escáner**: `POST /audits/:id/run-scan` no descarta
   en silencio los activos no verificados que se pidan por `asset_ids` —
   aborta toda la solicitud con `403 UNAUTHORIZED_SCAN_TARGET` y registra el
   intento en `audit_logs` (`UNAUTHORIZED_SCAN_BLOCKED`), con el detalle de
   qué activos estaban sin verificar.
-- **Delegación a TI**: quien pide la auditoría no siempre tiene acceso al
-  panel DNS de su propio dominio. `POST /assets/:id/delegate-verification`
-  arma y envía (mismo patrón "preparado pero no conectado" que el resto de
-  los emails — ver más abajo) un correo con el registro TXT exacto a crear,
-  reutilizable desde el modal guiado de `/assets`.
-- **UI guiada (a.md, "Modal de verificación de dominio por DNS")**: en
-  `/assets`, verificar un activo de tipo dominio abre un modal con
-  explicación en lenguaje llano y el registro TXT separado en dos campos
-  independientes con su propio botón de copiado — Host (`TXT` / `@`, fijo
-  porque hoy no hay un campo de subdominio distinto en el modelo de
-  `Asset`) y Valor (`aegis-site-verification=<token>`, con truncado para no
-  romper el layout) — en vez de una sola caja con todo el string, más
-  fácil de confundir al pegar en Cloudflare/NIC Chile/GoDaddy/AWS. Los 4
-  pasos incluyen una nota de propagación DNS (1-5 min), el botón
-  "Verificar ahora" muestra un spinner mientras el backend resuelve el TXT,
-  y la opción "Enviar instrucciones a mi equipo de TI" sigue siendo el
-  mismo diálogo, sin abrir un segundo modal superpuesto. Los activos
-  IP/CIDR siguen su verificación directa anterior (autoatestación de un
-  `ciso`, sin desafío DNS — no hay un mecanismo equivalente simple para el
-  MVP).
+- **Activos IP/CIDR**: siguen su verificación directa (autoatestación de un
+  `ciso`). Las pantallas del trámite de dominios llegan en una fase posterior;
+  mientras tanto, `/assets` solo muestra un aviso.
 
 ### Compliance, trazabilidad y retención (GDPR / ISO 27001)
 - **Audit logs inmutables**: `audit_logs` registra automáticamente carga de
@@ -1527,8 +1516,15 @@ Todos bajo `/api/v1`, requieren `Authorization: Bearer <token>` salvo donde se i
 | GET | `/frameworks/:framework/requirements` | Checklist de un framework |
 | POST / GET | `/assets` | Crear / listar activos (filtros `?type=&criticality=&tag=`) |
 | GET / DELETE | `/assets/:id` | Detalle / eliminar un activo |
-| POST | `/assets/:id/verify` | Verificar propiedad de un activo (dominio: desafío DNS TXT; IP/CIDR: autoatestación `ciso`) |
-| POST | `/assets/:id/delegate-verification` | Envía por correo las instrucciones de verificación DNS a un contacto de TI (`{ email }`) |
+| POST | `/assets/:id/verify` | Verificar un activo IP/CIDR (autoatestación de `ciso`). Un dominio responde `422 DOMAIN_REQUIRES_DECLARATION` |
+| POST | `/domain-declarations` | *(ciso)* Declara dominios con documento firmado y poderes |
+| GET | `/domain-declarations` | *(ciso)* Trámites de la organización |
+| POST | `/domain-declarations/items/:itemId/resend-link` | *(ciso)* Envía un link de correo nuevo y anula los anteriores |
+| POST | `/domain-verification/confirm` | *(ciso)* Confirma el link de correo |
+| GET | `/admin/domain-reviews` | *(platform admin)* Trámites esperando revisión |
+| GET | `/admin/domain-reviews/:itemId/documents/:kind` | *(platform admin)* Descarga la declaración (`signed`) o los poderes (`powers`) |
+| POST | `/admin/domain-reviews/:itemId/approve` | *(platform admin)* Aprueba y marca el dominio como verificado. No aplica a la propia organización |
+| POST | `/admin/domain-reviews/:itemId/reject` | *(platform admin)* Rechaza, con motivo. No aplica a la propia organización |
 | POST | `/audits/:id/run-scan` | Encolar un escaneo asíncrono — `403 UNAUTHORIZED_SCAN_TARGET` si algún activo pedido no está verificado |
 | GET | `/audits/:id/findings` | Hallazgos (filtrable por `?severity=`) |
 | GET | `/audits/:id/report` | Genera el reporte y devuelve `{ signedUrl, riskScore, coverage }` |
@@ -1637,10 +1633,6 @@ Selector de idioma (ES neutro / EN) en todas las pantallas, persistido en
   /audits/:id/run-scan` sin pasar `asset_ids`: escanea todos los activos
   verificados de la organización, no solo los vinculados a esa auditoría
   puntual (comportamiento heredado del endpoint, no nuevo de este botón).
-- El correo de delegación a TI (`POST /assets/:id/delegate-verification`)
-  sigue el mismo patrón "preparado pero no conectado" que el resto de los
-  emails del sistema: sin `RESEND_API_KEY`, el asunto/contenido queda en el
-  log del servidor en vez de salir por correo real.
 - La verificación de activos IP/CIDR es autoatestación de un `ciso` (no hay
   desafío DNS equivalente sencillo para un rango de IPs); no prueba
   criptográficamente la titularidad — a mejorar con RDAP/WHOIS cruzado
