@@ -14,6 +14,7 @@ import {
   LineChart,
   Search,
   ShieldCheck,
+  ShieldQuestion,
   Users,
   Wifi,
   WifiOff,
@@ -148,7 +149,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     },
     {
       label: t.groupOperations,
-      items: [{ href: "/admin/audit-logs", label: t.navAuditLogs, icon: FileClock }],
+      items: [
+        { href: "/admin/domain-reviews", label: t.navDomainReviews, icon: ShieldQuestion },
+        { href: "/admin/audit-logs", label: t.navAuditLogs, icon: FileClock },
+      ],
     },
     {
       label: t.groupFinance,

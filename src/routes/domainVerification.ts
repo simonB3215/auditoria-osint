@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { Router, type Request } from "express";
 import multer from "multer";
 import { z } from "zod";
-import { authenticateToken, requirePlatformAdmin, requireRole } from "../middlewares/auth.js";
+import { authenticateToken, requireMfa, requirePlatformAdmin, requireRole } from "../middlewares/auth.js";
 import { sensitiveActionRateLimiter } from "../middlewares/security.js";
 import { validateUuidParams } from "../middlewares/validateParams.js";
 import { AppError } from "../middlewares/errorHandler.js";
@@ -148,6 +148,7 @@ domainVerificationRouter.post(
   "/domain-declarations",
   authenticateToken,
   requireRole(["ciso"]),
+  requireMfa,
   sensitiveActionRateLimiter,
   upload.fields([
     { name: "signed_document", maxCount: 1 },
@@ -408,6 +409,7 @@ domainVerificationRouter.post(
   "/domain-verification/confirm",
   authenticateToken,
   requireRole(["ciso"]),
+  requireMfa,
   sensitiveActionRateLimiter,
   asyncHandler(async (req, res) => {
     const profile = req.profile!;
@@ -529,6 +531,7 @@ domainVerificationRouter.get(
   "/admin/domain-reviews",
   authenticateToken,
   requirePlatformAdmin,
+  requireMfa,
   asyncHandler(async (_req, res) => {
     const { data, error } = await supabaseAdmin
       .from("domain_declaration_items")
@@ -563,6 +566,7 @@ domainVerificationRouter.get(
   "/admin/domain-reviews/:itemId/documents/:kind",
   authenticateToken,
   requirePlatformAdmin,
+  requireMfa,
   validateUuidParams("itemId"),
   asyncHandler(async (req, res) => {
     const kind = z.enum(["signed", "powers"]).parse(req.params.kind);
@@ -604,6 +608,7 @@ domainVerificationRouter.post(
   "/admin/domain-reviews/:itemId/approve",
   authenticateToken,
   requirePlatformAdmin,
+  requireMfa,
   validateUuidParams("itemId"),
   sensitiveActionRateLimiter,
   asyncHandler(async (req, res) => {
@@ -694,6 +699,7 @@ domainVerificationRouter.post(
   "/admin/domain-reviews/:itemId/reject",
   authenticateToken,
   requirePlatformAdmin,
+  requireMfa,
   validateUuidParams("itemId"),
   sensitiveActionRateLimiter,
   asyncHandler(async (req, res) => {

@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { MfaSettings } from "@/components/mfa-settings";
 
 export default function AccountSettingsPage() {
   const { dict } = useI18n();
@@ -128,6 +129,8 @@ export default function AccountSettingsPage() {
           </form>
         </CardContent>
       </Card>
+
+      <MfaSettings />
     </div>
   );
 }

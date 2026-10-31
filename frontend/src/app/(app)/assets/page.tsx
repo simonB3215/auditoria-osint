@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { Globe, HelpCircle, Loader2, Plus, ShieldCheck, Trash2, X } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
 import type { Asset, AssetCriticality, AssetType } from "@/lib/types";
@@ -205,9 +206,6 @@ export default function AssetsPage() {
   }
 
   const [busyId, setBusyId] = useState<string | null>(null);
-
-  // Dominio cuyo aviso de verificación está abierto.
-  const [verifyDomainAsset, setVerifyDomainAsset] = useState<Asset | null>(null);
 
   const TYPE_LABEL: Record<AssetType, string> = {
     ip: t.typeIp,
@@ -590,14 +588,11 @@ export default function AssetsPage() {
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
                         {asset.verification_status !== "verified" && asset.type === "domain" && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={busyId === asset.id}
-                            onClick={() => setVerifyDomainAsset(asset)}
-                          >
-                            <ShieldCheck className="size-3.5" aria-hidden />
-                            {t.verify}
+                          <Button size="sm" variant="outline" asChild>
+                            <Link href={`/assets/verify?asset=${asset.id}`}>
+                              <ShieldCheck className="size-3.5" aria-hidden />
+                              {t.verify}
+                            </Link>
                           </Button>
                         )}
                         {asset.verification_status !== "verified" && asset.type !== "domain" && (
@@ -629,19 +624,6 @@ export default function AssetsPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={verifyDomainAsset !== null} onOpenChange={(open) => !open && setVerifyDomainAsset(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t.verifyDomainTitle}</DialogTitle>
-          </DialogHeader>
-          <p className="rounded-md border bg-muted/50 p-3 text-sm">{t.verifyDomainPending}</p>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setVerifyDomainAsset(null)}>
-              {t.close}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

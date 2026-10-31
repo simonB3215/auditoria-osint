@@ -1380,7 +1380,8 @@ de terceros sin autorización.
   Todo dominio termina en revisión manual (`/admin/domain-reviews`), y aprobar
   es lo único que marca un dominio como `verified`. Falla cerrado: sin
   `SIGNATURE_VALIDATOR_URL` no se acepta ninguna declaración, y sin
-  `RESEND_API_KEY` y `EMAIL_FROM` no queda ningún link vivo. **Nada de esto
+  `RESEND_API_KEY` y `EMAIL_FROM` no queda ningún link vivo. Declarar, confirmar y revisar
+  exigen una sesión con 2FA (TOTP de Supabase), que se activa en `/settings/account`. **Nada de esto
   se despliega a producción hasta cerrar la revisión legal, el proveedor de
   firma y Resend**: sin ellos, ningún dominio nuevo se puede verificar.
 - **Security gate en el escáner**: `POST /audits/:id/run-scan` no descarta
@@ -1389,8 +1390,8 @@ de terceros sin autorización.
   intento en `audit_logs` (`UNAUTHORIZED_SCAN_BLOCKED`), con el detalle de
   qué activos estaban sin verificar.
 - **Activos IP/CIDR**: siguen su verificación directa (autoatestación de un
-  `ciso`). Las pantallas del trámite de dominios llegan en una fase posterior;
-  mientras tanto, `/assets` solo muestra un aviso.
+  `ciso`). El trámite de dominios está en `/assets/verify`, el link de correo
+  abre `/verify-domain` y la cola de revisión está en `/admin/domain-reviews`.
 
 ### Compliance, trazabilidad y retención (GDPR / ISO 27001)
 - **Audit logs inmutables**: `audit_logs` registra automáticamente carga de

@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "../../src/config/supabase.js";
 import { env } from "../../src/config/env.js";
@@ -95,4 +96,51 @@ export async function destroyTestUser(user: TestUser | undefined): Promise<void>
 export async function destroyOrganization(organizationId: string | undefined): Promise<void> {
   if (!organizationId) return;
   await supabaseAdmin.from("organizations").delete().eq("id", organizationId);
+}
+
+function totpCode(base32Secret: string): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const bits = [...base32Secret.replace(/=+$/, "")]
+    .map((char) => alphabet.indexOf(char).toString(2).padStart(5, "0"))
+    .join("");
+  const key = Buffer.from(bits.match(/.{8}/g)!.map((byte) => parseInt(byte, 2)));
+
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30_000)));
+  const digest = createHmac("sha1", key).update(counter).digest();
+  const offset = digest[digest.length - 1]! & 0x0f;
+  return String((digest.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).padStart(6, "0");
+}
+
+/**
+ * Activa TOTP real en Supabase Auth y deja en `user.accessToken` la sesión
+ * con segundo factor (aal2), igual que después de pasar la pantalla de 2FA.
+ */
+export async function enableMfa(user: TestUser): Promise<void> {
+  async function call<T>(path: string, body: object, accessToken: string): Promise<T> {
+    const res = await fetch(`${env.SUPABASE_URL}/auth/v1/factors${path}`, {
+      method: "POST",
+      headers: {
+        apikey: env.SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`MFA de test falló en '${path}': ${await res.text()}`);
+    return (await res.json()) as T;
+  }
+
+  const factor = await call<{ id: string; totp: { secret: string } }>(
+    "",
+    { factor_type: "totp", friendly_name: "qa" },
+    user.accessToken
+  );
+  const challenge = await call<{ id: string }>(`/${factor.id}/challenge`, {}, user.accessToken);
+  const verified = await call<{ access_token: string }>(
+    `/${factor.id}/verify`,
+    { challenge_id: challenge.id, code: totpCode(factor.totp.secret) },
+    user.accessToken
+  );
+  user.accessToken = verified.access_token;
 }

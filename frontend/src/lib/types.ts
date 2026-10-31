@@ -35,7 +35,6 @@ export interface Asset {
   criticality: AssetCriticality;
   tags: string[];
   verification_status: AssetVerificationStatus;
-  /** Código a publicar en el TXT del dominio. Solo tiene sentido para type === "domain". */
   verified_at: string | null;
   created_at: string;
 }
@@ -405,4 +404,43 @@ export interface RealKpiReport {
   operational: RealKpiOperational;
   dailyActivity: DailyActivityPoint[];
   subscriptions: SubscriptionSummaryRow[];
+}
+
+export type DomainItemStatus = "pending_email" | "pending_review" | "approved" | "rejected";
+export type DomainReviewReason = "email_domain_mismatch" | "sensitive_domain";
+
+export interface DomainDeclarationItem {
+  id: string;
+  status: DomainItemStatus;
+  review_reason: DomainReviewReason | null;
+  email_confirmed_at: string | null;
+  reviewed_at: string | null;
+  assets: { id: string; value: string };
+}
+
+export interface DomainDeclaration {
+  id: string;
+  organization_rut: string;
+  signer_rut: string;
+  declaration_version: string;
+  signature_status: string;
+  powers_status: string;
+  created_at: string;
+  domain_declaration_items: DomainDeclarationItem[];
+}
+
+export interface DomainReview {
+  id: string;
+  organization_id: string;
+  organization_name: string;
+  domain: string;
+  review_reason: DomainReviewReason | null;
+  email_confirmed_at: string | null;
+  created_at: string;
+  declaration_id: string;
+  organization_rut: string;
+  signer_rut: string;
+  declaration_version: string;
+  signature_status: string;
+  powers_status: string;
 }

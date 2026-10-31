@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { KeyRound, LayoutDashboard, LogOut, Server, ShieldCheck, ShieldUser, Timer } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { savePostAuthPath } from "@/lib/post-auth-path";
 import { useProfile } from "@/hooks/useProfile";
 import { useI18n } from "@/lib/i18n/context";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,19 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       router.replace("/onboarding");
     }
   }, [errorCode, router]);
+
+  // Quien ya activó 2FA tiene que pasar el segundo paso para seguir, también
+  // si entró con Google o volvió con una sesión de un solo factor.
+  useEffect(() => {
+    createClient()
+      .auth.mfa.getAuthenticatorAssuranceLevel()
+      .then(({ data }) => {
+        if (data?.currentLevel === "aal1" && data.nextLevel === "aal2") {
+          savePostAuthPath(`${window.location.pathname}${window.location.search}${window.location.hash}`);
+          router.replace("/mfa");
+        }
+      });
+  }, [router]);
 
   async function handleLogout() {
     const supabase = createClient();

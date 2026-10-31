@@ -17,6 +17,7 @@ import {
   createTestUser,
   destroyOrganization,
   destroyTestUser,
+  enableMfa,
   type TestUser,
 } from "./helpers/tenants.js";
 import { supabaseAdmin } from "../src/config/supabase.js";
@@ -61,6 +62,7 @@ describe("Parte 1 (V2): rechazos al declarar un dominio", () => {
     auditor = await createTestUser(orgId, "auditor-dec", "auditor", domain);
     otherCiso = await createTestUser(otherOrgId, "ciso-b-dec", "ciso");
     freeEmailCiso = await createTestUser(freeOrgId, "ciso-c-dec", "ciso", "gmail.com");
+    await Promise.all([ciso, otherCiso, freeEmailCiso].map(enableMfa));
     assetId = (await createDomainAsset(ciso, domain)).id;
   }, 60000);
 
@@ -194,6 +196,38 @@ describe("Parte 1 (V2): rechazos al declarar un dominio", () => {
     expect(second.status).toBe(409);
     expect(second.body.error.code).toBe("DOMAIN_DECLARATION_ALREADY_OPEN");
     expect(await countDeclarations(otherOrgId)).toBe(1);
+  });
+
+  test("TC-VER-29: sin segundo factor no se puede declarar, confirmar ni revisar", async () => {
+    const noMfaCiso = await createTestUser(orgId, "ciso-sin-mfa", "ciso");
+    const { error } = await supabaseAdmin
+      .from("profiles")
+      .update({ is_platform_admin: true })
+      .eq("id", noMfaCiso.userId);
+    expect(error).toBeNull();
+
+    try {
+      const declared = await submitDeclaration(noMfaCiso, [assetId]);
+      expect(declared.status).toBe(403);
+      expect(declared.body.error.code).toBe("MFA_REQUIRED");
+
+      const confirmed = await api
+        .post("/api/v1/domain-verification/confirm")
+        .set("Authorization", bearer(noMfaCiso.accessToken))
+        .send({ token: "a".repeat(64) });
+      expect(confirmed.body.error.code).toBe("MFA_REQUIRED");
+
+      const queue = await api.get("/api/v1/admin/domain-reviews").set("Authorization", bearer(noMfaCiso.accessToken));
+      expect(queue.body.error.code).toBe("MFA_REQUIRED");
+
+      const approved = await api
+        .post(`/api/v1/admin/domain-reviews/${randomUUID()}/approve`)
+        .set("Authorization", bearer(noMfaCiso.accessToken))
+        .send({});
+      expect(approved.body.error.code).toBe("MFA_REQUIRED");
+    } finally {
+      await destroyTestUser(noMfaCiso);
+    }
   });
 
   test("TC-VER-28: el flujo TXT ya no existe", async () => {

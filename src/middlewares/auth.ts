@@ -149,6 +149,34 @@ export function requireRole(allowedRoles: UserRole[]) {
 }
 
 /**
+ * Exige una sesión con segundo factor (TOTP de Supabase). Debe usarse siempre
+ * después de authenticateToken: `aal` se lee del propio JWT porque
+ * `auth.getUser` ya validó ese token contra Supabase.
+ */
+export function requireMfa(req: Request, res: Response, next: NextFunction): void {
+  if (!req.profile) {
+    res.status(401).json({ error: { code: "UNAUTHORIZED", message: "No autenticado" } });
+    return;
+  }
+
+  let aal: unknown;
+  try {
+    aal = JSON.parse(Buffer.from(req.profile.accessToken.split(".")[1] ?? "", "base64url").toString("utf8")).aal;
+  } catch {
+    aal = null;
+  }
+
+  if (aal !== "aal2") {
+    res.status(403).json({
+      error: { code: "MFA_REQUIRED", message: "Esta acción requiere la verificación en dos pasos activa en tu sesión" },
+    });
+    return;
+  }
+
+  next();
+}
+
+/**
  * Gatea las rutas /api/v1/admin/*. Debe usarse siempre después de
  * authenticateToken. No hay forma de auto-otorgarse esto vía API — ver
  * db/promote-admin.ts.

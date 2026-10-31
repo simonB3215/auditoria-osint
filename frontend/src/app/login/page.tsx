@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { api } from "@/lib/api";
+import { savePostAuthPath, takePostAuthPath } from "@/lib/post-auth-path";
 import { useI18n } from "@/lib/i18n/context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,6 +32,11 @@ export default function LoginPage() {
     } else if (params.get("reason") === "session_expired") {
       setError(t.sessionExpired);
     }
+    // El link de correo de un dominio llega acá sin sesión: el navegador
+    // conserva el fragmento (#token=...) en la redirección del middleware.
+    if (window.location.hash.startsWith("#token=")) {
+      savePostAuthPath(`/verify-domain${window.location.hash}`);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -54,7 +60,7 @@ export default function LoginPage() {
       return;
     }
 
-    router.push("/dashboard");
+    router.push(takePostAuthPath() ?? "/dashboard");
     router.refresh();
   }
 

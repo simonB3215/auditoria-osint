@@ -18,6 +18,7 @@ import {
   createTestUser,
   destroyOrganization,
   destroyTestUser,
+  enableMfa,
   type TestUser,
 } from "./helpers/tenants.js";
 import { env } from "../src/config/env.js";
@@ -71,6 +72,7 @@ describe("Parte 1 (V2): correo y revisión manual", () => {
     ciso = await createTestUser(orgId, "ciso-rev", "ciso", domain);
     sameDomainColleague = await createTestUser(orgId, "ciso-2-rev", "ciso", domain);
     reviewer = await createTestUser(reviewerOrgId, "admin-rev", "ciso");
+    await Promise.all([ciso, sameDomainColleague, reviewer].map(enableMfa));
 
     const { error } = await supabaseAdmin.from("profiles").update({ is_platform_admin: true }).eq("id", reviewer.userId);
     if (error) throw new Error(`No se pudo marcar al revisor: ${error.message}`);
@@ -171,6 +173,7 @@ describe("Parte 1 (V2): correo y revisión manual", () => {
   test("TC-VER-23: sin Resend no queda ningún link vivo ni en la base ni en los logs", async () => {
     const secondDomain = uniqueDomain();
     const secondCiso = await createTestUser(orgId, "ciso-3-rev", "ciso", secondDomain);
+    await enableMfa(secondCiso);
     const asset = await createDomainAsset(secondCiso, secondDomain);
 
     const apiKey = process.env.RESEND_API_KEY;

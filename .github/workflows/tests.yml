@@ -68,6 +68,10 @@ jobs:
       - name: Init proyecto Supabase local
         run: supabase init
 
+      # La verificación de dominios exige 2FA, y `supabase init` trae TOTP apagado.
+      - name: Activar TOTP en Supabase local
+        run: sed -i '/^\[auth.mfa.totp\]/,/^$/ s/= false/= true/' supabase/config.toml
+
       - name: Levantar stack local de Supabase (Postgres + Auth + Storage)
         run: supabase start --ignore-health-check
 
